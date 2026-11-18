@@ -1,26 +1,39 @@
+
 import { createInertiaApp } from '@inertiajs/vue3';
 import { initializeTheme } from '@/composables/useAppearance';
 import AppLayout from '@/layouts/AppLayout.vue';
 import AuthLayout from '@/layouts/AuthLayout.vue';
+import PixelStudioLayout from '@/layouts/PixelStudioLayout.vue';
 import SettingsLayout from '@/layouts/settings/Layout.vue';
 import { initializeFlashToast } from '@/lib/flashToast';
 
-const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
+const appName = import.meta.env.VITE_APP_NAME || 'Pixel Studio';
 
 void createInertiaApp({
     title: (title) => (title ? `${title} - ${appName}` : appName),
+
     layout: (name) => {
         switch (true) {
             case name === 'Welcome':
                 return null;
+
             case name.startsWith('auth/'):
                 return AuthLayout;
+
             case name.startsWith('settings/'):
                 return [AppLayout, SettingsLayout];
+
+            case name.startsWith('studio/') ||
+                name.startsWith('history/') ||
+                name.startsWith('wallet/') ||
+                name.startsWith('admin/'):
+                return PixelStudioLayout;
+
             default:
                 return AppLayout;
         }
     },
+
     withApp: (app) => {
         app.directive('focus', {
             mounted: (el: HTMLElement, shouldFocus) => {
@@ -30,13 +43,11 @@ void createInertiaApp({
             },
         });
     },
+
     progress: {
-        color: '#4B5563',
+        color: '#3B82F6',
     },
 });
 
-// This will set light / dark mode on page load...
 initializeTheme();
-
-// This will listen for flash toast data from the server...
 initializeFlashToast();
