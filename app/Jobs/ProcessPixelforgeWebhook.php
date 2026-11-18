@@ -9,6 +9,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Facades\DB;
+use App\Models\Generation;
 use Throwable;
 
 class ProcessPixelforgeWebhook implements ShouldQueue
@@ -52,15 +53,25 @@ class ProcessPixelforgeWebhook implements ShouldQueue
             return;
         }
 
-        // Fetch canonical provider state instead of
-        // trusting potentially stale webhook contents.
+        // Avoid retrieving provider state before the local
+        // generation has been linked to its provider job.
+        $generation = Generation::query()
+            ->where('provider_job_id', $event->provider_job_id)
+            ->first();
+
+        if ($generation === null) {
+            $this->release(30);
+
+            return;
+        }
+
+        // A previously completed generation may receive
+        // duplicate webhook deliveries. Still reconcile
+        // the event's processing status below.
         $providerResult = $client->retrieveGeneration(
             $event->provider_job_id
         );
 
-        // May throw when provider_job_id has not yet been
-        // attached to the local generation.
-        // Queue retries allow time for submission to finish.
         $processor->process(
             $event->provider_job_id,
             $providerResult
@@ -72,8 +83,13 @@ class ProcessPixelforgeWebhook implements ShouldQueue
                 ->lockForUpdate()
                 ->firstOrFail();
 
+            if ($locked->isProcessed()) {
+                return;
+            }
+
             $locked->status =
                 ProviderWebhookEvent::STATUS_PROCESSED;
+
             $locked->processed_at = now();
             $locked->processing_error = null;
             $locked->save();
