@@ -10,12 +10,15 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class Generation extends Model
 {
     public const STATUS_QUEUED = 'queued';
-
     public const STATUS_PROCESSING = 'processing';
-
     public const STATUS_COMPLETED = 'completed';
-
     public const STATUS_FAILED = 'failed';
+
+    public const SUBMISSION_PENDING = 'pending';
+    public const SUBMISSION_SUBMITTING = 'submitting';
+    public const SUBMISSION_ACCEPTED = 'accepted';
+    public const SUBMISSION_UNCERTAIN = 'uncertain';
+    public const SUBMISSION_NEEDS_REVIEW = 'needs_review';
 
     protected $fillable = [
         'user_id',
@@ -40,6 +43,11 @@ class Generation extends Model
             'estimated_charge_units' => 'integer',
             'provider_cost_units' => 'integer',
             'customer_charge_units' => 'integer',
+
+            'submission_attempts' => 'integer',
+            'submission_last_attempted_at' => 'datetime',
+            'submission_reconciliation_due_at' => 'datetime',
+            'submission_claimed_until' => 'datetime',
 
             'submitted_at' => 'datetime',
             'completed_at' => 'datetime',
@@ -83,5 +91,16 @@ class Generation extends Model
     public function isTerminal(): bool
     {
         return $this->isCompleted() || $this->isFailed();
+    }
+
+    public function needsSubmissionRecovery(): bool
+    {
+        return ! $this->isTerminal()
+            && $this->provider_job_id === null
+            && in_array($this->submission_status, [
+                self::SUBMISSION_PENDING,
+                self::SUBMISSION_SUBMITTING,
+                self::SUBMISSION_UNCERTAIN,
+            ], true);
     }
 }

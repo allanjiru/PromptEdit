@@ -2,8 +2,7 @@
 
 namespace App\Jobs;
 
-use App\Models\Generation;
-use App\Services\GenerationService;
+use App\Services\GenerationSubmissionClaimService;
 use App\Services\PixelforgeClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -11,7 +10,7 @@ use Illuminate\Queue\Middleware\WithoutOverlapping;
 use RuntimeException;
 use Throwable;
 
-class SubmitPixelforgeGeneration implements ShouldQueue
+final class SubmitPixelforgeGeneration implements ShouldQueue
 {
     use Queueable;
 
@@ -20,7 +19,8 @@ class SubmitPixelforgeGeneration implements ShouldQueue
     public int $timeout = 45;
 
     public function __construct(
-        public int $generationId
+        public int $generationId,
+        public ?string $dispatchToken = null
     ) {}
 
     public function backoff(): array
@@ -42,75 +42,52 @@ class SubmitPixelforgeGeneration implements ShouldQueue
 
     public function handle(
         PixelforgeClient $client,
-        GenerationService $service
+        GenerationSubmissionClaimService $claims
     ): void {
-        $generation = Generation::query()
-            ->findOrFail($this->generationId);
-
-        // Never resubmit a terminal generation.
-        if ($generation->isTerminal()) {
-            return;
-        }
-
-        // The provider job has already been recorded.
-        if ($generation->provider_job_id !== null) {
-            return;
-        }
-
-        // Reuse the immutable provider request payload.
-        $payload = $generation->provider_request_payload;
-
-        // Legacy generations may not have a saved snapshot.
-        // Preserve their original empty metadata.
-        if ($payload === null) {
-            $payload = [
-                'prompt' => $generation->prompt,
-                'size' => $generation->image_size,
-                'quality' => $generation->quality,
-                'reference_images' =>
-                    $generation->reference_image_urls ?? [],
-                'metadata' => [],
-            ];
-        }
-
-        // Retry with the original idempotency key
-        // and exactly the same request parameters.
-        $response = $client->createGenerationFromPayload(
-            $generation->request_key,
-            $payload
+        $claim = $claims->acquire(
+            $this->generationId,
+            $this->dispatchToken
         );
 
-        $providerId = $response['id'] ?? null;
+        if ($claim === null) {
+            return;
+        }
 
-        if (
-            ! is_string($providerId) ||
-            ! preg_match('/^gen_[A-Za-z0-9]+$/', $providerId)
-        ) {
-            throw new RuntimeException(
-                'Pixelforge returned an invalid generation ID.'
+        try {
+            $response = $client->createGenerationFromPayload(
+                $claim['request_key'],
+                $claim['payload']
             );
+
+            $providerId = $response['id'] ?? null;
+
+            if (
+                ! is_string($providerId) ||
+                ! preg_match('/^gen_[A-Za-z0-9]+$/', $providerId)
+            ) {
+                throw new RuntimeException(
+                    'Pixelforge returned an invalid generation ID.'
+                );
+            }
+
+            $claims->accepted(
+                $this->generationId,
+                $claim['token'],
+                $providerId
+            );
+        } catch (Throwable $exception) {
+            $claims->uncertain(
+                $this->generationId,
+                $claim['token'],
+                $exception->getMessage()
+            );
+
+            throw $exception;
         }
-
-        // Refresh in case another worker updated the record.
-        $generation->refresh();
-
-        // Never overwrite a terminal generation.
-        if ($generation->isTerminal()) {
-            return;
-        }
-
-        // Persist the provider generation identifier.
-        $service->attachProviderJob(
-            $generation,
-            $providerId
-        );
     }
 
     public function failed(?Throwable $exception): void
     {
-        // Do not automatically release reserved credits.
-        // The provider may have accepted the request
-        // even if PromptEdit lost its HTTP response.
         report(
             $exception ?? new RuntimeException(
                 'Pixelforge submission exhausted its attempts.'
