@@ -10,6 +10,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 class PixelforgeWebhookController extends Controller
 {
@@ -17,7 +18,7 @@ class PixelforgeWebhookController extends Controller
         Request $request,
         PixelforgeWebhookVerifier $verifier
     ): JsonResponse {
-        // Authenticate before validating or persisting.
+        // Verify the signature against the raw request body.
         $verifier->verify($request);
 
         $payload = json_decode(
@@ -25,31 +26,56 @@ class PixelforgeWebhookController extends Controller
             true
         );
 
-        $validated = Validator::make(
+        $base = Validator::make(
             $payload ?? [],
             [
-                'id' => ['required', 'string', 'max:255'],
+                'id' => [
+                    'required',
+                    'string',
+                    'regex:/^evt_[A-Za-z0-9]+$/',
+                    'max:255',
+                ],
+                'object' => ['required', 'in:event'],
                 'type' => ['required', 'string', 'max:80'],
+            ]
+        )->validate();
+
+        // A signed dashboard test event needs no generation job.
+        if ($base['type'] === 'ping') {
+            return response()->json([
+                'received' => true,
+            ]);
+        }
+
+        $validated = Validator::make(
+            $payload,
+            [
+                'type' => [
+                    'required',
+                    Rule::in([
+                        'generation.processing',
+                        'generation.succeeded',
+                        'generation.failed',
+                    ]),
+                ],
                 'data' => ['required', 'array'],
-                'data.id' => [
+                'data.object' => ['required', 'array'],
+                'data.object.id' => [
                     'required',
                     'string',
                     'regex:/^gen_[A-Za-z0-9]+$/',
                 ],
+                'data.object.object' => [
+                    'required',
+                    'in:generation',
+                ],
             ]
         )->validate();
 
-        $eventId = $validated['id'];
-        $providerJobId = $validated['data']['id'];
+        $eventId = $base['id'];
         $eventType = $validated['type'];
+        $providerJobId = $validated['data']['object']['id'];
 
-        $jsonPayload = json_encode(
-            $payload,
-            JSON_THROW_ON_ERROR
-        );
-
-        // PostgreSQL handles concurrent inserts using
-        // the unique index on provider_event_id.
         $inserted = DB::select(
             <<<'SQL'
                 INSERT INTO provider_webhook_events (
@@ -62,13 +88,8 @@ class PixelforgeWebhookController extends Controller
                     updated_at
                 )
                 VALUES (
-                    ?,
-                    ?,
-                    ?,
-                    CAST(? AS json),
-                    ?,
-                    CURRENT_TIMESTAMP,
-                    CURRENT_TIMESTAMP
+                    ?, ?, ?, CAST(? AS json),
+                    ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 ON CONFLICT (provider_event_id)
                 DO NOTHING
@@ -78,7 +99,7 @@ class PixelforgeWebhookController extends Controller
                 $eventId,
                 $providerJobId,
                 $eventType,
-                $jsonPayload,
+                json_encode($payload, JSON_THROW_ON_ERROR),
                 ProviderWebhookEvent::STATUS_RECEIVED,
             ]
         );
@@ -89,7 +110,6 @@ class PixelforgeWebhookController extends Controller
             ->where('provider_event_id', $eventId)
             ->firstOrFail();
 
-        // Reject an event ID reused with different data.
         if (
             $event->provider_job_id !== $providerJobId ||
             $event->event_type !== $eventType ||
@@ -98,8 +118,6 @@ class PixelforgeWebhookController extends Controller
             abort(409, 'Conflicting provider event.');
         }
 
-        // Only the request that created the event
-        // dispatches its initial processing job.
         if ($created) {
             ProcessPixelforgeWebhook::dispatch($event->id)
                 ->onQueue('webhooks')
@@ -108,6 +126,6 @@ class PixelforgeWebhookController extends Controller
 
         return response()->json([
             'received' => true,
-        ], 200);
+        ]);
     }
 }

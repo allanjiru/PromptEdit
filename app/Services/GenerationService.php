@@ -96,6 +96,17 @@ class GenerationService
                 'reference_image_urls' => $referenceUrls,
             ]);
 
+            $generation->provider_request_payload = [
+                'prompt' => $prompt,
+                'size' => $size,
+                'quality' => $quality,
+                'reference_images' => $referenceUrls,
+                'metadata' => [
+                    'promptedit_generation_id' => (string) $generation->id,
+                    'promptedit_request_key' => $requestKey,
+                ],
+            ];
+
             // Financial fields are service-controlled.
             $generation->estimated_charge_units =
                 $estimatedChargeUnits;

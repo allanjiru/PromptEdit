@@ -40,7 +40,6 @@ class SubmitPixelforgeGeneration implements ShouldQueue
         ];
     }
 
-    
     public function handle(
         PixelforgeClient $client,
         GenerationService $service
@@ -48,67 +47,74 @@ class SubmitPixelforgeGeneration implements ShouldQueue
         $generation = Generation::query()
             ->findOrFail($this->generationId);
 
-        // Never submit a terminal generation again.
+        // Never resubmit a terminal generation.
         if ($generation->isTerminal()) {
             return;
         }
 
-        // Provider submission already recorded.
+        // The provider job has already been recorded.
         if ($generation->provider_job_id !== null) {
             return;
         }
 
-        // The request key is persisted when the generation
-        // is created. Every retry must reuse this exact key.
-        $response = $client->createGeneration(
+        // Reuse the immutable provider request payload.
+        $payload = $generation->provider_request_payload;
+
+        // Legacy generations may not have a saved snapshot.
+        // Preserve their original empty metadata.
+        if ($payload === null) {
+            $payload = [
+                'prompt' => $generation->prompt,
+                'size' => $generation->image_size,
+                'quality' => $generation->quality,
+                'reference_images' =>
+                    $generation->reference_image_urls ?? [],
+                'metadata' => [],
+            ];
+        }
+
+        // Retry with the original idempotency key
+        // and exactly the same request parameters.
+        $response = $client->createGenerationFromPayload(
             $generation->request_key,
-            $generation->prompt,
-            $generation->image_size,
-            $generation->quality,
-            $generation->reference_image_urls ?? []
+            $payload
         );
 
         $providerId = $response['id'] ?? null;
 
         if (
             ! is_string($providerId) ||
-            ! str_starts_with($providerId, 'gen_')
+            ! preg_match('/^gen_[A-Za-z0-9]+$/', $providerId)
         ) {
             throw new RuntimeException(
                 'Pixelforge returned an invalid generation ID.'
             );
         }
 
-        // A callback could have finalized the generation
-        // while the provider HTTP request was in flight.
+        // Refresh in case another worker updated the record.
         $generation->refresh();
 
+        // Never overwrite a terminal generation.
         if ($generation->isTerminal()) {
-            // Do not overwrite the terminal state.
-            // A reconciliation handler will handle any
-            // missing provider identifier separately.
             return;
         }
 
+        // Persist the provider generation identifier.
         $service->attachProviderJob(
             $generation,
             $providerId
         );
     }
 
-
     public function failed(?Throwable $exception): void
     {
-        // Do not automatically release the reservation.
-        //
-        // A timeout may mean Pixelforge accepted the
-        // generation even though Laravel lost the reply.
-        //
-        // Record the failure for operational recovery,
-        // then reconcile with Pixelforge before deciding
-        // whether a refund is appropriate.
-        report($exception ?? new RuntimeException(
-            'Pixelforge submission exhausted its attempts.'
-        ));
+        // Do not automatically release reserved credits.
+        // The provider may have accepted the request
+        // even if PromptEdit lost its HTTP response.
+        report(
+            $exception ?? new RuntimeException(
+                'Pixelforge submission exhausted its attempts.'
+            )
+        );
     }
 }

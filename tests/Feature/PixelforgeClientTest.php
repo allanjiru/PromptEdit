@@ -167,4 +167,61 @@ class PixelforgeClientTest extends TestCase
             'medium'
         );
     }
+
+
+    public function test_submission_replay_uses_identical_payload(): void
+    {
+        config([
+            'services.pixelforge.api_key' => 'test-key',
+            'services.pixelforge.base_url' =>
+                'https://pixelforge.example/v1',
+        ]);
+
+        $payload = [
+            'prompt' => 'A mountain landscape',
+            'size' => '1024x1024',
+            'quality' => 'high',
+            'reference_images' => [],
+            'metadata' => [
+                'promptedit_generation_id' => '42',
+            ],
+        ];
+
+        Http::fake([
+            'pixelforge.example/*' => Http::response([
+                'id' => 'gen_replay123',
+                'object' => 'generation',
+                'status' => 'queued',
+            ], 202),
+        ]);
+
+        $client = app(PixelforgeClient::class);
+
+        $first = $client->createGenerationFromPayload(
+            'stable-request-key',
+            $payload
+        );
+
+        $second = $client->createGenerationFromPayload(
+            'stable-request-key',
+            $payload
+        );
+
+        $this->assertSame($first, $second);
+
+        Http::assertSentCount(2);
+
+        foreach (Http::recorded() as [$request, $response]) {
+            $this->assertSame(
+                'stable-request-key',
+                $request->header('Idempotency-Key')[0]
+            );
+
+            $this->assertSame(
+                $payload,
+                $request->data()
+            );
+        }
+    }
+
 }

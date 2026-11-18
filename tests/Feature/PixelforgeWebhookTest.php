@@ -27,16 +27,35 @@ class PixelforgeWebhookTest extends TestCase
         Bus::fake();
     }
 
-    private function payload(
-        string $eventId = 'evt_test123',
-        string $providerId = 'gen_test123'
-    ): array {
+    private function payload(): array
+    {
         return [
-            'id' => $eventId,
+            'id' => 'evt_test123',
+            'object' => 'event',
             'type' => 'generation.succeeded',
+            'created_at' => now()->toIso8601String(),
             'data' => [
-                'id' => $providerId,
-                'status' => 'succeeded',
+                'object' => [
+                    'id' => 'gen_test123',
+                    'object' => 'generation',
+                    'status' => 'succeeded',
+                    'metadata' => [],
+                    'image_url' => 'https://example.com/image.png',
+                    'usage' => [
+                        'input_text_tokens' => 12,
+                        'input_image_tokens' => 0,
+                        'output_tokens' => 1100,
+                        'reasoning_tokens' => 500,
+                        'total_tokens' => 1612,
+                    ],
+                    'rates' => [
+                        'input_text_tokens' => '5.00',
+                        'input_image_tokens' => '10.00',
+                        'output_tokens' => '40.00',
+                        'reasoning_tokens' => '12.50',
+                    ],
+                    'error' => null,
+                ],
             ],
         ];
     }
@@ -272,5 +291,65 @@ class PixelforgeWebhookTest extends TestCase
             1
         );
     }
+
+    
+    public function test_real_provider_webhook_shape_is_accepted(): void
+    {
+        $payload = $this->payload();
+
+        $this->sendWebhook($payload)->assertOk();
+
+        $this->assertDatabaseHas(
+            'provider_webhook_events',
+            [
+                'provider_event_id' => 'evt_test123',
+                'provider_job_id' => 'gen_test123',
+                'event_type' => 'generation.succeeded',
+            ]
+        );
+
+        Bus::assertDispatchedTimes(
+            ProcessPixelforgeWebhook::class,
+            1
+        );
+    }
+
+    public function test_signed_ping_does_not_queue_generation(): void
+    {
+        $this->sendWebhook([
+            'id' => 'evt_ping123',
+            'object' => 'event',
+            'type' => 'ping',
+        ])->assertOk();
+
+        $this->assertDatabaseCount(
+            'provider_webhook_events',
+            0
+        );
+
+        Bus::assertNotDispatched(
+            ProcessPixelforgeWebhook::class
+        );
+    }
+
+    public function test_generation_event_requires_nested_object(): void
+    {
+        $payload = $this->payload();
+
+        unset($payload['data']['object']);
+
+        $this->sendWebhook($payload)
+            ->assertUnprocessable();
+
+        $this->assertDatabaseCount(
+            'provider_webhook_events',
+            0
+        );
+
+        Bus::assertNotDispatched(
+            ProcessPixelforgeWebhook::class
+        );
+    }
+
 
 }

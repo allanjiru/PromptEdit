@@ -14,8 +14,8 @@ use LogicException;
 use Tests\TestCase;
 
 /**
- * Integration tests for the proposed GenerationService contract.
- * Adjust signatures/status names to the actual implementation before use.
+ * Integration tests for generation lifecycle,
+ * wallet reservations, settlement, and idempotency.
  */
 final class GenerationServiceTest extends TestCase
 {
@@ -65,6 +65,25 @@ final class GenerationServiceTest extends TestCase
             'amount_units' => 30_000_000,
             'status' => 'active',
         ]);
+
+        $generation->refresh();
+
+        $this->assertSame(
+            [
+                'prompt' => $generation->prompt,
+                'size' => $generation->image_size,
+                'quality' => $generation->quality,
+                'reference_images' =>
+                    $generation->reference_image_urls ?? [],
+                'metadata' => [
+                    'promptedit_generation_id' =>
+                        (string) $generation->id,
+                    'promptedit_request_key' =>
+                        (string) $generation->request_key,
+                ],
+            ],
+            $generation->provider_request_payload
+        );
     }
 
     public function test_retrying_same_request_does_not_reserve_twice(): void
@@ -74,6 +93,29 @@ final class GenerationServiceTest extends TestCase
 
         $this->assertSame($first->id, $second->id);
         $this->assertSame([9_970_000_000, 30_000_000], $this->wallet());
+        $this->assertDatabaseCount('generations', 1);
+        $this->assertDatabaseCount('wallet_reservations', 1);
+    }
+
+
+    public function test_retrying_same_request_preserves_provider_payload(): void
+    {
+        $first = $this->create();
+
+        $originalPayload = $first->provider_request_payload;
+
+        $second = $this->create();
+
+        $this->assertSame(
+            $first->id,
+            $second->id
+        );
+
+        $this->assertSame(
+            $originalPayload,
+            $second->fresh()->provider_request_payload
+        );
+
         $this->assertDatabaseCount('generations', 1);
         $this->assertDatabaseCount('wallet_reservations', 1);
     }

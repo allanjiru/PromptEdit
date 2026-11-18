@@ -64,7 +64,7 @@ class PixelforgeClient
             $response->status() !== 202 ||
             ! is_array($data) ||
             ! is_string($data['id'] ?? null) ||
-            ! str_starts_with($data['id'], 'gen_')
+            ! preg_match('/^gen_[A-Za-z0-9]+$/', $data['id'])
         ) {
             throw new LogicException(
                 'Unexpected Pixelforge creation response.'
@@ -116,4 +116,33 @@ class PixelforgeClient
             ->throw()
             ->json();
     }
+
+
+    public function createGenerationFromPayload(
+        string $idempotencyKey,
+        array $payload
+    ): array {
+        $response = $this->request()
+            ->withHeaders([
+                'Idempotency-Key' => $idempotencyKey,
+            ])
+            ->post('/generations', $payload)
+            ->throw();
+
+        $data = $response->json();
+
+        if (
+            $response->status() !== 202 ||
+            ! is_array($data) ||
+            ! is_string($data['id'] ?? null) ||
+            ! preg_match('/^gen_[A-Za-z0-9]+$/', $data['id'])
+        ) {
+            throw new LogicException(
+                'Unexpected Pixelforge creation response.'
+            );
+        }
+
+        return $data;
+    }
+
 }

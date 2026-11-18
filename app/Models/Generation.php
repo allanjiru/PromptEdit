@@ -35,6 +35,7 @@ class Generation extends Model
         return [
             'reference_image_urls' => 'array',
             'result_image_urls' => 'array',
+            'provider_request_payload' => 'array',
 
             'estimated_charge_units' => 'integer',
             'provider_cost_units' => 'integer',
