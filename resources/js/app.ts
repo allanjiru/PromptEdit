@@ -3,7 +3,6 @@ import { createInertiaApp } from '@inertiajs/vue3';
 import { initializeTheme } from '@/composables/useAppearance';
 import AppLayout from '@/layouts/AppLayout.vue';
 import AuthLayout from '@/layouts/AuthLayout.vue';
-import PixelStudioLayout from '@/layouts/PixelStudioLayout.vue';
 import SettingsLayout from '@/layouts/settings/Layout.vue';
 import { initializeFlashToast } from '@/lib/flashToast';
 
@@ -22,12 +21,6 @@ void createInertiaApp({
 
             case name.startsWith('settings/'):
                 return [AppLayout, SettingsLayout];
-
-            case name.startsWith('studio/') ||
-                name.startsWith('history/') ||
-                name.startsWith('wallet/') ||
-                name.startsWith('admin/'):
-                return PixelStudioLayout;
 
             default:
                 return AppLayout;

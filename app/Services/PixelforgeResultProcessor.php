@@ -86,10 +86,20 @@ class PixelforgeResultProcessor
         );
     }
 
+    
     private function processSuccess(
         Generation $generation,
         array $payload
     ): Generation {
+        $generation->refresh();
+
+        // A webhook and reconciliation may arrive together.
+        // The GenerationService remains responsible for
+        // transactional idempotency during settlement.
+        if ($generation->isTerminal()) {
+            return $generation;
+        }
+
         $usage = $payload['usage'] ?? null;
         $rates = $payload['rates'] ?? null;
 
@@ -99,38 +109,69 @@ class PixelforgeResultProcessor
             );
         }
 
-        $images = $payload['images'] ?? null;
-
-        if (! is_array($images) || $images === []) {
-            throw new LogicException(
-                'Successful provider result has no images.'
-            );
-        }
-
         $urls = [];
 
-        foreach ($images as $image) {
+        // Support provider responses containing an images array.
+        if (isset($payload['images'])) {
             if (
-                ! is_array($image) ||
-                ! is_string($image['url'] ?? null) ||
-                ! filter_var(
-                    $image['url'],
-                    FILTER_VALIDATE_URL
-                )
+                ! is_array($payload['images']) ||
+                $payload['images'] === []
             ) {
                 throw new LogicException(
-                    'Invalid provider image URL.'
+                    'Successful provider result has no images.'
                 );
             }
 
-            $urls[] = $image['url'];
+            foreach ($payload['images'] as $image) {
+                if (
+                    ! is_array($image) ||
+                    ! is_string($image['url'] ?? null) ||
+                    ! filter_var(
+                        $image['url'],
+                        FILTER_VALIDATE_URL
+                    )
+                ) {
+                    throw new LogicException(
+                        'Invalid provider image URL.'
+                    );
+                }
+
+                $urls[] = $image['url'];
+            }
+        } elseif (
+            is_string($payload['image_url'] ?? null) &&
+            filter_var(
+                $payload['image_url'],
+                FILTER_VALIDATE_URL
+            )
+        ) {
+            // Pixelforge's retrieveGeneration() response
+            // supplies a single signed image_url.
+            $urls[] = $payload['image_url'];
         }
 
-        $providerCostUnits =
-            $this->pricing->providerCostUnits(
-                $usage,
-                $rates
+        if ($urls === []) {
+            throw new LogicException(
+                'Successful provider result has no valid image URL.'
             );
+        }
+
+        // The provider includes total_tokens as an informational
+        // aggregate. It must not be billed separately.
+        $billableUsage = array_intersect_key(
+            $usage,
+            array_flip([
+                'input_text_tokens',
+                'input_image_tokens',
+                'output_tokens',
+                'reasoning_tokens',
+            ])
+        );
+
+        $providerCostUnits = $this->pricing->providerCostUnits(
+            $billableUsage,
+            $rates
+        );
 
         return $this->generations->succeed(
             $generation,
