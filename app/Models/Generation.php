@@ -47,7 +47,9 @@ class Generation extends Model
             'submission_attempts' => 'integer',
             'submission_last_attempted_at' => 'datetime',
             'submission_reconciliation_due_at' => 'datetime',
-            'submission_claimed_until' => 'datetime',
+            'submission_claimed_until' => 'datetime'
+            ,
+            'recovery_dispatch_until' => 'datetime',
 
             'submitted_at' => 'datetime',
             'completed_at' => 'datetime',

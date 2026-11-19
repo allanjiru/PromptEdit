@@ -20,75 +20,64 @@ final class GenerationSubmissionClaimService
             $dispatchToken
         ) {
             $generation = $this->lockGeneration($generationId);
+            $now = now();
 
-            // Never submit terminal, accepted, or
-            // manually blocked generations.
             if (
                 $generation->isTerminal() ||
                 $generation->provider_job_id !== null ||
-                $generation->submission_status ===
-                    Generation::SUBMISSION_NEEDS_REVIEW ||
-                $generation->submission_status ===
-                    Generation::SUBMISSION_ACCEPTED
+                in_array($generation->submission_status, [
+                    Generation::SUBMISSION_NEEDS_REVIEW,
+                    Generation::SUBMISSION_ACCEPTED,
+                ], true)
             ) {
                 return null;
             }
 
-            $hasClaim =
-                $generation->submission_claim_token !== null;
+            $dispatchIsActive =
+                $generation->recovery_dispatch_token !== null &&
+                $generation->recovery_dispatch_until !== null &&
+                $generation->recovery_dispatch_until->gt($now);
 
-            $claimIsActive =
-                $hasClaim &&
+            if ($dispatchToken !== null) {
+                // Recovery worker must own a live dispatch.
+                if (
+                    ! $dispatchIsActive ||
+                    $generation->recovery_dispatch_token !== $dispatchToken
+                ) {
+                    return null;
+                }
+            } elseif ($dispatchIsActive) {
+                // Ordinary workers cannot steal recovery work.
+                return null;
+            }
+
+            $providerClaimActive =
+                $generation->submission_claim_token !== null &&
                 $generation->submission_claimed_until !== null &&
-                $generation->submission_claimed_until->isFuture();
+                $generation->submission_claimed_until->gt($now);
 
-            // A recovery worker may consume its own
-            // dispatch reservation, but cannot consume
-            // another worker's active claim.
-            $isReservedDispatch =
-                $dispatchToken !== null &&
-                $generation->submission_claim_token ===
-                    $dispatchToken &&
-                $claimIsActive &&
-                $generation->submission_status !==
-                    Generation::SUBMISSION_SUBMITTING;
-
-            // Recovery workers must present the current
-            // valid dispatch token.
-            if (
-                $dispatchToken !== null &&
-                ! $isReservedDispatch
-            ) {
+            if ($providerClaimActive) {
                 return null;
             }
 
-            // Ordinary workers cannot bypass an active
-            // recovery dispatch or provider-call claim.
+            // Only a validated recovery dispatch may bypass
+            // the reconciliation deadline.
             if (
-                $claimIsActive &&
-                ! $isReservedDispatch
-            ) {
-                return null;
-            }
-
-            // A valid recovery dispatch bypasses the
-            // scheduling delay reserved by the command.
-            if (
-                ! $isReservedDispatch &&
+                $dispatchToken === null &&
                 $generation->submission_reconciliation_due_at !== null &&
-                $generation->submission_reconciliation_due_at->isFuture()
+                $generation->submission_reconciliation_due_at->gt($now)
             ) {
                 return null;
             }
 
-            // Never construct a replacement provider
-            // payload during recovery.
             if ($generation->provider_request_payload === null) {
                 $generation->submission_status =
                     Generation::SUBMISSION_NEEDS_REVIEW;
 
                 $generation->submission_claim_token = null;
                 $generation->submission_claimed_until = null;
+                $generation->recovery_dispatch_token = null;
+                $generation->recovery_dispatch_until = null;
                 $generation->submission_reconciliation_due_at = null;
 
                 $generation->submission_last_error =
@@ -100,14 +89,16 @@ final class GenerationSubmissionClaimService
                 return null;
             }
 
-            // Rotate the dispatch token into a fresh
-            // provider-call claim token.
             $token = (string) Str::uuid();
 
-            $generation->submission_claim_token = $token;
+            // Consume recovery dispatch authorization.
+            $generation->recovery_dispatch_token = null;
+            $generation->recovery_dispatch_until = null;
 
+            // Establish the actual provider-call claim.
+            $generation->submission_claim_token = $token;
             $generation->submission_claimed_until =
-                now()->addSeconds(self::LEASE_SECONDS);
+                $now->copy()->addSeconds(self::LEASE_SECONDS);
 
             $generation->submission_status =
                 Generation::SUBMISSION_SUBMITTING;
@@ -115,8 +106,7 @@ final class GenerationSubmissionClaimService
             $generation->submission_attempts =
                 ((int) $generation->submission_attempts) + 1;
 
-            $generation->submission_last_attempted_at = now();
-
+            $generation->submission_last_attempted_at = $now;
             $generation->submission_reconciliation_due_at = null;
             $generation->submission_last_error = null;
 
@@ -148,8 +138,6 @@ final class GenerationSubmissionClaimService
         ) {
             $generation = $this->lockGeneration($generationId);
 
-            // A stale worker must never overwrite
-            // the current submission claim.
             if (
                 $generation->submission_claim_token !== $token ||
                 $generation->isTerminal()
@@ -176,6 +164,8 @@ final class GenerationSubmissionClaimService
             $generation->submission_claimed_until = null;
             $generation->submission_reconciliation_due_at = null;
             $generation->submission_last_error = null;
+            $generation->recovery_dispatch_token = null;
+            $generation->recovery_dispatch_until = null;
 
             $generation->save();
 
@@ -195,8 +185,6 @@ final class GenerationSubmissionClaimService
         ) {
             $generation = $this->lockGeneration($generationId);
 
-            // Ignore stale workers, terminal generations,
-            // and submissions already linked to a provider.
             if (
                 $generation->submission_claim_token !== $token ||
                 $generation->isTerminal() ||
@@ -225,11 +213,10 @@ final class GenerationSubmissionClaimService
 
     private function lockGeneration(int $generationId): Generation
     {
-        // Read the user ID before acquiring locks.
         $generation = Generation::query()
             ->findOrFail($generationId);
 
-        // Preserve the lifecycle service's lock order:
+        // Consistent lock order across financial operations:
         // wallet first, generation second.
         DB::table('wallets')
             ->where('user_id', $generation->user_id)

@@ -11,3 +11,7 @@ Artisan::command('inspire', function () {
 Schedule::command('pixelforge:recover-webhooks')
     ->everyMinute()
     ->withoutOverlapping(5);
+
+Schedule::command('pixelforge:recover-submissions')
+    ->everyMinute()
+    ->withoutOverlapping(5);
