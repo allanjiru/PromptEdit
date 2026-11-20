@@ -3,12 +3,9 @@
 namespace App\Console\Commands;
 
 use App\Models\Generation;
-use App\Services\PixelforgeClient;
-use App\Jobs\PersistGenerationImages;
-use App\Services\PixelforgeResultProcessor;
+use App\Services\PixelforgeReconciliationState;
+use App\Services\PixelforgeResultReconciler;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Cache;
-use Throwable;
 
 class ReconcilePixelforgeResults extends Command
 {
@@ -20,8 +17,7 @@ class ReconcilePixelforgeResults extends Command
         'Reconcile accepted Pixelforge generations with provider results.';
 
     public function handle(
-        PixelforgeClient $client,
-        PixelforgeResultProcessor $processor
+        PixelforgeResultReconciler $reconciler
     ): int {
         $limit = filter_var(
             $this->option('limit'),
@@ -64,11 +60,24 @@ class ReconcilePixelforgeResults extends Command
         if ($id !== null) {
             $query->whereKey($id);
         } else {
-            // Avoid polling jobs that have just been accepted.
-            $query->where(
-                'submitted_at',
-                '<=',
-                now()->subSeconds(30)
+            $query->where(function ($query) {
+                $query->where(
+                    'result_reconciliation_due_at',
+                    '<=',
+                    now()
+                )->orWhere(function ($query) {
+                    $query->whereNull('result_reconciliation_due_at')
+                        ->whereNull('result_reconciliation_exhausted_at')
+                        ->where(
+                            'submitted_at',
+                            '<=',
+                            now()->subSeconds(30)
+                        );
+                });
+            })->where(
+                'result_reconciliation_attempts',
+                '<',
+                PixelforgeReconciliationState::MAX_PROVIDER_REQUESTS
             );
         }
 
@@ -82,65 +91,20 @@ class ReconcilePixelforgeResults extends Command
         $errors = 0;
 
         foreach ($generations as $generation) {
-            $lock = Cache::lock(
-                "pixelforge:result-reconcile:{$generation->id}",
-                90
-            );
+            $result = $reconciler->reconcile($generation->id);
 
-            if (! $lock->get()) {
-                continue;
-            }
-
-            try {
-                $generation->refresh();
-
-                if (
-                    $generation->isTerminal() ||
-                    ! $generation->provider_job_id
-                ) {
-                    continue;
-                }
-
-                $remote = $client->retrieveGeneration(
-                    $generation->provider_job_id
-                );
-
-                $updated = $processor->process(
-                    $generation->provider_job_id,
-                    $remote
-                );
-
-                if ($updated->status === Generation::STATUS_COMPLETED) {
-                    PersistGenerationImages::dispatch($updated->id)
-                        ->onQueue('images');
-                }
-
-                if ($updated->isTerminal()) {
-                    $processed++;
-
-                    $this->info(
-                        "Generation {$generation->id}: {$updated->status}"
-                    );
-                } else {
-                    $pending++;
-                }
-            } catch (Throwable $exception) {
+            if ($result['outcome'] === 'terminal') {
+                $processed++;
+            } elseif ($result['outcome'] === 'pending') {
+                $pending++;
+            } elseif ($result['outcome'] === 'error') {
                 $errors++;
-
-                report($exception);
-
-                $this->error(
-                    "Generation {$generation->id}: " .
-                    $exception->getMessage()
-                );
-            } finally {
-                $lock->release();
             }
         }
 
         $this->info(
-            "Completed: {$processed}; " .
-            "Pending: {$pending}; " .
+            "Completed: {$processed}; ".
+            "Pending: {$pending}; ".
             "Errors: {$errors}."
         );
 

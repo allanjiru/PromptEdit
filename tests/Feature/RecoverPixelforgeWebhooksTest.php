@@ -103,7 +103,7 @@ class RecoverPixelforgeWebhooksTest extends TestCase
         Bus::assertNotDispatched(
             ProcessPixelforgeWebhook::class
         );
-        
+
     }
 
     public function test_recent_event_is_not_redispatched(): void

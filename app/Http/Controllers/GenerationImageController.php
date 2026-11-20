@@ -26,9 +26,9 @@ class GenerationImageController extends Controller
         abort_unless(
             is_string($path) &&
             preg_match(
-                '#^generations/' .
-                $generation->user_id . '/' .
-                $generation->id .
+                '#^generations/'.
+                $generation->user_id.'/'.
+                $generation->id.
                 '/image-[0-9]+\.png$#',
                 $path
             ),

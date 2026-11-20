@@ -1,5 +1,7 @@
 <?php
 
+$privateFilesystemRoot = env('PRIVATE_FILESYSTEM_ROOT');
+
 return [
 
     /*
@@ -32,8 +34,13 @@ return [
 
         'local' => [
             'driver' => 'local',
-            'root' => storage_path('app/private'),
-            'serve' => true,
+            'root' => is_string($privateFilesystemRoot) &&
+                $privateFilesystemRoot !== ''
+                    ? $privateFilesystemRoot
+                    : storage_path('app/private'),
+            // Generated images are served only by the owner-authorized
+            // controller, never by Laravel's generic local serving route.
+            'serve' => false,
             'throw' => false,
             'report' => false,
         ],

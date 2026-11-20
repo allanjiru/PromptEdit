@@ -2,24 +2,27 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\ReconcilePixelforgeGeneration;
 use App\Jobs\SubmitPixelforgeGeneration;
 use App\Models\Generation;
 use App\Models\ProviderWebhookEvent;
 use App\Models\User;
 use App\Services\GenerationService;
 use App\Services\PixelforgeClient;
+use App\Services\PixelforgeReconciliationState;
 use App\Services\WalletService;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Worker;
 use Illuminate\Queue\WorkerOptions;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
-use Illuminate\Queue\Events\JobFailed;
-use Illuminate\Support\Facades\Event;
 use Mockery;
 use RuntimeException;
 use Tests\TestCase;
@@ -223,8 +226,7 @@ final class PixelforgeWorkerIntegrationTest extends TestCase
             [],
             [
                 'CONTENT_TYPE' => 'application/json',
-                'HTTP_PIXELFORGE_SIGNATURE' =>
-                    "t={$timestamp},v1={$signature}",
+                'HTTP_PIXELFORGE_SIGNATURE' => "t={$timestamp},v1={$signature}",
             ],
             $body
         )
@@ -311,6 +313,78 @@ final class PixelforgeWorkerIntegrationTest extends TestCase
                 'amount_units' => 150_000_000,
             ]
         );
+    }
+
+    public function test_released_reconciliation_job_executes_its_queued_follow_up(): void
+    {
+        $generation = $this->createGeneration();
+        app(GenerationService::class)->attachProviderJob(
+            $generation,
+            self::PROVIDER_ID
+        );
+
+        $client = Mockery::mock(PixelforgeClient::class);
+        $client->shouldReceive('retrieveGeneration')
+            ->twice()
+            ->with(self::PROVIDER_ID)
+            ->andReturn(
+                [
+                    'id' => self::PROVIDER_ID,
+                    'status' => 'processing',
+                ],
+                [
+                    'id' => self::PROVIDER_ID,
+                    'status' => 'succeeded',
+                    'usage' => [
+                        'input_tokens' => 1000,
+                        'output_tokens' => 2000,
+                    ],
+                    'rates' => [
+                        'input_tokens' => '5.00',
+                        'output_tokens' => '40.00',
+                    ],
+                    'image_url' => self::IMAGE_URL,
+                ]
+            );
+        $this->app->instance(PixelforgeClient::class, $client);
+
+        $state = app(PixelforgeReconciliationState::class);
+        $this->assertTrue($state->scheduleInitial($generation->id));
+
+        Bus::dispatch(
+            (new ReconcilePixelforgeGeneration($generation->id))
+                ->onQueue($this->queueName)
+                ->delay(PixelforgeReconciliationState::INITIAL_DELAY_SECONDS)
+        );
+
+        $this->assertSame(1, $this->pendingJobs());
+        $this->travel(
+            PixelforgeReconciliationState::INITIAL_DELAY_SECONDS
+        )->seconds();
+
+        $this->runWorkerOnce();
+
+        $pending = $generation->fresh();
+        $this->assertSame(Generation::STATUS_PROCESSING, $pending->status);
+        $this->assertSame(1, $pending->result_reconciliation_attempts);
+        $this->assertSame(1, $this->pendingJobs());
+        $this->assertNotNull($pending->result_reconciliation_due_at);
+
+        $queuedFollowUp = DB::table('jobs')
+            ->where('queue', $this->queueName)
+            ->first();
+        $this->assertNotNull($queuedFollowUp);
+        $this->assertNull($queuedFollowUp->reserved_at);
+
+        $this->travel(10)->seconds();
+        $this->runWorkerOnce();
+
+        $completed = $generation->fresh();
+        $this->assertTrue($completed->isCompleted());
+        $this->assertSame(2, $completed->result_reconciliation_attempts);
+        $this->assertNull($completed->result_reconciliation_due_at);
+        $this->assertNull($completed->result_reconciliation_claim_token);
+        $this->assertSame(0, $this->pendingJobs());
     }
 
     public function test_worker_releases_job_after_provider_timeout(): void
@@ -578,7 +652,6 @@ final class PixelforgeWorkerIntegrationTest extends TestCase
         );
     }
 
-
     public function test_worker_exhausts_retries_without_refunding_uncertain_generation(): void
     {
         $generation = $this->createGeneration();
@@ -747,7 +820,7 @@ final class PixelforgeWorkerIntegrationTest extends TestCase
             1,
             $generation->fresh()->submission_attempts
         );
-        
+
     }
 
     public function test_worker_releases_overlapping_generation_job_without_provider_call(): void
@@ -855,5 +928,4 @@ final class PixelforgeWorkerIntegrationTest extends TestCase
             $lock->release();
         }
     }
-
 }

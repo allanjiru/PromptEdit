@@ -85,7 +85,7 @@ final class ArtisanQueueWorkerFailureIntegrationTest extends TestCase
     public function test_artisan_worker_persists_exhausted_job(): void
     {
         Queue::connection('database')->push(
-            new AlwaysFailingArtisanQueueTestJob(),
+            new AlwaysFailingArtisanQueueTestJob,
             '',
             $this->queueName
         );

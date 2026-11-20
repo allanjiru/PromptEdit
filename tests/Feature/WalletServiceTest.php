@@ -163,8 +163,7 @@ class WalletServiceTest extends TestCase
             'wallet_transactions',
             [
                 'generation_id' => $generation->id,
-                'type' =>
-                    WalletTransaction::TYPE_GENERATION_CHARGE,
+                'type' => WalletTransaction::TYPE_GENERATION_CHARGE,
             ]
         );
     }
@@ -381,8 +380,7 @@ class WalletServiceTest extends TestCase
             'wallet_transactions',
             [
                 'generation_id' => $generation->id,
-                'type' =>
-                    WalletTransaction::TYPE_GENERATION_CHARGE,
+                'type' => WalletTransaction::TYPE_GENERATION_CHARGE,
             ]
         );
     }
@@ -503,13 +501,11 @@ class WalletServiceTest extends TestCase
                 'wallet_transactions',
                 [
                     'generation_id' => $generation->id,
-                    'type' =>
-                        WalletTransaction::TYPE_GENERATION_CHARGE,
+                    'type' => WalletTransaction::TYPE_GENERATION_CHARGE,
                 ]
             );
         }
     }
-
 
     public function test_zero_cost_generation_releases_entire_reservation(): void
     {
@@ -747,5 +743,4 @@ class WalletServiceTest extends TestCase
                 ->count()
         );
     }
-
 }

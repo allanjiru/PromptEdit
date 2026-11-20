@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Services;
 
 use App\Models\Generation;
@@ -13,7 +14,7 @@ use LogicException;
 class WalletService
 {
     /**
-     * Money is represented as integer micro-USD.
+     * Money is represented as integer nano-USD.
      *
      * 1 USD = 1,000,000 units.
      */
@@ -41,11 +42,16 @@ class WalletService
      * Add sandbox credits exactly once per idempotency key.
      *
      * The caller must authorize and validate this operation.
+     *
+     * @param  array<string, mixed>  $metadata
      */
     public function addDemoCredits(
         User $user,
         int $amountUnits,
-        string $idempotencyKey
+        string $idempotencyKey,
+        ?int $maxCumulativeUnits = null,
+        string $description = 'Demo credit grant',
+        array $metadata = []
     ): WalletTransaction {
         if ($amountUnits < 1_000_000_000 ||
             $amountUnits > 200_000_000_000) {
@@ -63,7 +69,10 @@ class WalletService
         return DB::transaction(function () use (
             $wallet,
             $amountUnits,
-            $idempotencyKey
+            $idempotencyKey,
+            $maxCumulativeUnits,
+            $description,
+            $metadata
         ) {
             $lockedWallet = $this->lockWallet($wallet->id);
 
@@ -72,10 +81,20 @@ class WalletService
                 ->first();
 
             if ($existing) {
+                $existingMetadata = $existing->getAttribute('metadata');
+
                 if (
                     $existing->wallet_id !== $lockedWallet->id ||
                     $existing->type !== WalletTransaction::TYPE_DEMO_CREDIT ||
-                    $existing->available_delta_units !== $amountUnits
+                    $existing->available_delta_units !== $amountUnits ||
+                    (
+                        isset($metadata['package_id']) &&
+                        (
+                            ! is_array($existingMetadata) ||
+                            ($existingMetadata['package_id'] ?? null) !==
+                                $metadata['package_id']
+                        )
+                    )
                 ) {
                     throw new LogicException(
                         'Idempotency key reused with different parameters.'
@@ -83,6 +102,22 @@ class WalletService
                 }
 
                 return $existing;
+            }
+
+            if ($maxCumulativeUnits !== null) {
+                $creditedUnits = (int) WalletTransaction::query()
+                    ->where('wallet_id', $lockedWallet->id)
+                    ->where('type', WalletTransaction::TYPE_DEMO_CREDIT)
+                    ->sum('available_delta_units');
+
+                if (
+                    $maxCumulativeUnits <= 0 ||
+                    $creditedUnits > $maxCumulativeUnits - $amountUnits
+                ) {
+                    throw ValidationException::withMessages([
+                        'package' => 'This purchase would exceed the demo credit limit.',
+                    ]);
+                }
             }
 
             $this->assertCanAdd(
@@ -100,7 +135,8 @@ class WalletService
                 $idempotencyKey,
                 $amountUnits,
                 0,
-                'Demo credit grant'
+                $description,
+                $metadata
             );
         }, 3);
     }
@@ -230,7 +266,6 @@ class WalletService
 
             $key = "generation:{$generation->id}:charge";
 
-            
             $existing = WalletTransaction::query()
                 ->where('idempotency_key', $key)
                 ->first();
@@ -500,6 +535,8 @@ class WalletService
      *
      * Must be called while the wallet row is locked
      * inside a database transaction.
+     *
+     * @param  array<string, mixed>  $metadata
      */
     private function recordTransaction(
         Wallet $wallet,

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\SubmitPixelforgeGeneration;
 use App\Models\Generation;
+use App\Models\Wallet;
 use App\Services\GenerationEstimateService;
 use App\Services\GenerationPricingService;
 use App\Services\GenerationService;
@@ -35,10 +36,11 @@ class GenerationController extends Controller
             'reference_image_urls' => [
                 'sometimes',
                 'array',
+                'max:'.Generation::MAX_REFERENCE_IMAGES,
             ],
             'reference_image_urls.*' => [
                 'required',
-                'url',
+                'url:http,https',
                 'max:2048',
             ],
         ]);
@@ -60,8 +62,7 @@ class GenerationController extends Controller
                     $referenceUrls
             ) {
                 throw ValidationException::withMessages([
-                    'request_key' =>
-                        'This request key is already associated with different generation parameters.',
+                    'request_key' => 'This request key is already associated with different generation parameters.',
                 ]);
             }
 
@@ -95,16 +96,28 @@ class GenerationController extends Controller
                 ->afterCommit();
         }
 
+        $wallet = Wallet::query()
+            ->where('user_id', $request->user()->getKey())
+            ->firstOrFail();
+
         return response()->json([
             'id' => $generation->id,
             'request_key' => $generation->request_key,
             'status' => $generation->status,
-            'estimated_charge_units' =>
-                $generation->estimated_charge_units,
-            'estimated_charge_usd' =>
-                $pricing->formatUsd(
-                    $generation->estimated_charge_units
+            'estimated_charge_units' => $generation->estimated_charge_units,
+            'estimated_charge_usd' => $pricing->formatUsd(
+                $generation->estimated_charge_units
+            ),
+            'wallet' => [
+                'available_units' => $wallet->available_units,
+                'available_usd' => $pricing->formatUsd(
+                    $wallet->available_units
                 ),
+                'reserved_units' => $wallet->reserved_units,
+                'reserved_usd' => $pricing->formatUsd(
+                    $wallet->reserved_units
+                ),
+            ],
         ], 202);
     }
 }

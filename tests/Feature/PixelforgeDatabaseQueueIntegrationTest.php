@@ -127,10 +127,13 @@ final class PixelforgeDatabaseQueueIntegrationTest extends TestCase
         );
 
         $this->assertSame(
-            0,
+            1,
             DB::table('jobs')
                 ->where('queue', 'generations')
                 ->count()
+        );
+        $this->assertNotNull(
+            $submitted->result_reconciliation_due_at
         );
 
         $this->assertDatabaseHas('wallet_reservations', [

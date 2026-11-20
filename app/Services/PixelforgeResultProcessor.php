@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\Generation;
-use Illuminate\Support\Facades\DB;
 use LogicException;
 
 class PixelforgeResultProcessor
@@ -86,18 +85,20 @@ class PixelforgeResultProcessor
         );
     }
 
-    
     private function processSuccess(
         Generation $generation,
         array $payload
     ): Generation {
         $generation->refresh();
 
-        // A webhook and reconciliation may arrive together.
-        // The GenerationService remains responsible for
-        // transactional idempotency during settlement.
-        if ($generation->isTerminal()) {
+        if ($generation->status === Generation::STATUS_COMPLETED) {
             return $generation;
+        }
+
+        if ($generation->status === Generation::STATUS_FAILED) {
+            throw new LogicException(
+                'A failed generation cannot be completed.'
+            );
         }
 
         $usage = $payload['usage'] ?? null;
@@ -156,17 +157,28 @@ class PixelforgeResultProcessor
             );
         }
 
-        // The provider includes total_tokens as an informational
-        // aggregate. It must not be billed separately.
-        $billableUsage = array_intersect_key(
-            $usage,
-            array_flip([
-                'input_text_tokens',
-                'input_image_tokens',
-                'output_tokens',
-                'reasoning_tokens',
-            ])
-        );
+        // total_tokens is an informational aggregate, not an
+        // additional billable category.
+        $billableUsage = $usage;
+        unset($billableUsage['total_tokens']);
+
+        // Reject unknown usage categories instead of silently
+        // undercharging the customer.
+        $supportedCategories = [
+            'input_tokens',
+            'input_text_tokens',
+            'input_image_tokens',
+            'output_tokens',
+            'reasoning_tokens',
+        ];
+
+        foreach (array_keys($billableUsage) as $category) {
+            if (! in_array($category, $supportedCategories, true)) {
+                throw new LogicException(
+                    "Unsupported provider usage category: {$category}"
+                );
+            }
+        }
 
         $providerCostUnits = $this->pricing->providerCostUnits(
             $billableUsage,

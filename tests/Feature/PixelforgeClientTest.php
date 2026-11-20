@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Services\PixelforgeClient;
 use Illuminate\Http\Client\Request;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -29,11 +30,10 @@ class PixelforgeClientTest extends TestCase
     public function test_it_submits_with_correct_payload_and_idempotency(): void
     {
         Http::fake([
-            'pixelforge.promptedit.dev/v1/generations' =>
-                Http::response([
-                    'id' => 'gen_TEST123',
-                    'status' => 'queued',
-                ], 202),
+            'pixelforge.promptedit.dev/v1/generations' => Http::response([
+                'id' => 'gen_TEST123',
+                'status' => 'queued',
+            ], 202),
         ]);
 
         $client = app(PixelforgeClient::class);
@@ -64,10 +64,10 @@ class PixelforgeClientTest extends TestCase
                 && $request['size'] === '1024x1024'
                 && $request['quality'] === 'high'
                 && $request['reference_images'] === [
-                    'https://example.com/reference.png'
+                    'https://example.com/reference.png',
                 ]
                 && $request['metadata'] === [
-                    'order_id' => '123'
+                    'order_id' => '123',
                 ];
         });
     }
@@ -75,11 +75,10 @@ class PixelforgeClientTest extends TestCase
     public function test_it_retrieves_provider_generation(): void
     {
         Http::fake([
-            'pixelforge.promptedit.dev/v1/generations/gen_TEST123' =>
-                Http::response([
-                    'id' => 'gen_TEST123',
-                    'status' => 'processing',
-                ]),
+            'pixelforge.promptedit.dev/v1/generations/gen_TEST123' => Http::response([
+                'id' => 'gen_TEST123',
+                'status' => 'processing',
+            ]),
         ]);
 
         $result = app(PixelforgeClient::class)
@@ -94,14 +93,13 @@ class PixelforgeClientTest extends TestCase
     public function test_it_fetches_pricing(): void
     {
         Http::fake([
-            'pixelforge.promptedit.dev/v1/pricing' =>
-                Http::response([
-                    'currency' => 'usd',
-                    'unit' => 'per_1m_tokens',
-                    'rates' => [
-                        'output_tokens' => '40.00',
-                    ],
-                ]),
+            'pixelforge.promptedit.dev/v1/pricing' => Http::response([
+                'currency' => 'usd',
+                'unit' => 'per_1m_tokens',
+                'rates' => [
+                    'output_tokens' => '40.00',
+                ],
+            ]),
         ]);
 
         $result = app(PixelforgeClient::class)->pricing();
@@ -115,11 +113,10 @@ class PixelforgeClientTest extends TestCase
     public function test_it_fetches_usage_for_date_range(): void
     {
         Http::fake([
-            'pixelforge.promptedit.dev/v1/usage*' =>
-                Http::response([
-                    'object' => 'usage',
-                    'data' => [],
-                ]),
+            'pixelforge.promptedit.dev/v1/usage*' => Http::response([
+                'object' => 'usage',
+                'data' => [],
+            ]),
         ]);
 
         app(PixelforgeClient::class)->usage(
@@ -127,8 +124,7 @@ class PixelforgeClientTest extends TestCase
             '2026-11-17'
         );
 
-        Http::assertSent(fn (Request $request) =>
-            $request->method() === 'GET'
+        Http::assertSent(fn (Request $request) => $request->method() === 'GET'
             && $request->data()['start_date'] ===
                 '2026-11-01'
             && $request->data()['end_date'] ===
@@ -147,17 +143,16 @@ class PixelforgeClientTest extends TestCase
     public function test_it_propagates_provider_errors(): void
     {
         Http::fake([
-            'pixelforge.promptedit.dev/v1/generations' =>
-                Http::response([
-                    'error' => [
-                        'code' => 'overloaded',
-                        'message' => 'Try again later.',
-                    ],
-                ], 503),
+            'pixelforge.promptedit.dev/v1/generations' => Http::response([
+                'error' => [
+                    'code' => 'overloaded',
+                    'message' => 'Try again later.',
+                ],
+            ], 503),
         ]);
 
         $this->expectException(
-            \Illuminate\Http\Client\RequestException::class
+            RequestException::class
         );
 
         app(PixelforgeClient::class)->createGeneration(
@@ -168,13 +163,11 @@ class PixelforgeClientTest extends TestCase
         );
     }
 
-
     public function test_submission_replay_uses_identical_payload(): void
     {
         config([
             'services.pixelforge.api_key' => 'test-key',
-            'services.pixelforge.base_url' =>
-                'https://pixelforge.example/v1',
+            'services.pixelforge.base_url' => 'https://pixelforge.example/v1',
         ]);
 
         $payload = [
@@ -223,5 +216,4 @@ class PixelforgeClientTest extends TestCase
             );
         }
     }
-
 }

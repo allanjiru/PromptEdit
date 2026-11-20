@@ -90,6 +90,7 @@ $startWorker = static function () use ($root, $environment, $queue, &$processes)
     $process->setTimeout(55);
     $process->start();
     $processes[] = $process;
+
     return $process;
 };
 
@@ -114,6 +115,7 @@ try {
             ],
         ]);
         $result = @file_get_contents('http://127.0.0.1:'.$port.'/__health', false, $context);
+
         return $result === basename($state);
     }, 4, 'Mock provider health check failed.');
 
@@ -166,7 +168,6 @@ try {
         throw new RuntimeException('Worker A ended before Worker B completed.');
     }
 
-    
     $remaining = DB::table('jobs')
         ->where('queue', $queue)
         ->get();
@@ -205,7 +206,6 @@ try {
             'The overlapping job was not released with a delay.'
         );
     }
-
 
     $recorded = file($state.'/requests.log', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     if ($recorded === false || count($recorded) !== 1) {

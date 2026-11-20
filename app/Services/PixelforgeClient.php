@@ -117,7 +117,6 @@ class PixelforgeClient
             ->json();
     }
 
-
     public function createGenerationFromPayload(
         string $idempotencyKey,
         array $payload
@@ -144,5 +143,4 @@ class PixelforgeClient
 
         return $data;
     }
-
 }

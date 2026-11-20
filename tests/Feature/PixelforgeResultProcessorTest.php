@@ -7,7 +7,9 @@ use App\Models\User;
 use App\Services\GenerationService;
 use App\Services\PixelforgeResultProcessor;
 use App\Services\WalletService;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use LogicException;
 use Tests\TestCase;
@@ -73,8 +75,7 @@ class PixelforgeResultProcessorTest extends TestCase
             ],
             'images' => [
                 [
-                    'url' =>
-                        'https://example.com/result.png',
+                    'url' => 'https://example.com/result.png',
                 ],
             ],
         ];
@@ -355,12 +356,11 @@ class PixelforgeResultProcessorTest extends TestCase
         ]);
     }
 
-    
     public function test_webhook_before_provider_id_attachment_cannot_resolve(): void
     {
         // Simulate a webhook arriving before the provider
         // job ID has been persisted.
-        \Illuminate\Support\Facades\DB::table('generations')
+        DB::table('generations')
             ->where('id', $this->generation->id)
             ->update([
                 'provider_job_id' => null,
@@ -372,12 +372,11 @@ class PixelforgeResultProcessorTest extends TestCase
         ]);
 
         $this->expectException(
-            \Illuminate\Database\Eloquent\ModelNotFoundException::class
+            ModelNotFoundException::class
         );
 
         $this->process(
             $this->successfulPayload()
         );
     }
-
 }

@@ -10,8 +10,20 @@ Artisan::command('inspire', function () {
 
 Schedule::command('pixelforge:recover-webhooks')
     ->everyMinute()
+    ->onOneServer()
     ->withoutOverlapping(5);
 
 Schedule::command('pixelforge:recover-submissions')
     ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(5);
+
+Schedule::command('generations:recover-images --limit=50')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(5);
+
+Schedule::command('pixelforge:reconcile-results --limit=10')
+    ->everyMinute()
+    ->onOneServer()
     ->withoutOverlapping(5);

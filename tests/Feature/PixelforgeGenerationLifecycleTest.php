@@ -4,22 +4,23 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
-use App\Services\GenerationSubmissionRecoveryService;
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Support\Facades\Queue;
-
 use App\Jobs\ProcessPixelforgeWebhook;
 use App\Jobs\SubmitPixelforgeGeneration;
 use App\Models\Generation;
 use App\Models\ProviderWebhookEvent;
 use App\Models\User;
+use App\Services\GenerationImagePersistenceDispatcher;
 use App\Services\GenerationService;
 use App\Services\GenerationSubmissionClaimService;
+use App\Services\GenerationSubmissionRecoveryService;
 use App\Services\PixelforgeClient;
 use App\Services\PixelforgeResultProcessor;
 use App\Services\WalletService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Mockery;
 use Tests\TestCase;
@@ -138,8 +139,7 @@ final class PixelforgeGenerationLifecycleTest extends TestCase
             [],
             [
                 'CONTENT_TYPE' => 'application/json',
-                'HTTP_PIXELFORGE_SIGNATURE' =>
-                    "t={$timestamp},v1={$signature}",
+                'HTTP_PIXELFORGE_SIGNATURE' => "t={$timestamp},v1={$signature}",
             ],
             $body
         )
@@ -188,7 +188,8 @@ final class PixelforgeGenerationLifecycleTest extends TestCase
 
         $job->handle(
             $client,
-            app(PixelforgeResultProcessor::class)
+            app(PixelforgeResultProcessor::class),
+            app(GenerationImagePersistenceDispatcher::class)
         );
     }
 
@@ -276,8 +277,7 @@ final class PixelforgeGenerationLifecycleTest extends TestCase
             'provider_webhook_events',
             [
                 'provider_event_id' => 'evt_lifecycle001',
-                'status' =>
-                    ProviderWebhookEvent::STATUS_PROCESSED,
+                'status' => ProviderWebhookEvent::STATUS_PROCESSED,
             ]
         );
     }
@@ -334,7 +334,8 @@ final class PixelforgeGenerationLifecycleTest extends TestCase
         (new ProcessPixelforgeWebhook($event->id))
             ->handle(
                 $client,
-                app(PixelforgeResultProcessor::class)
+                app(PixelforgeResultProcessor::class),
+                app(GenerationImagePersistenceDispatcher::class)
             );
 
         $second = $generation->fresh();
@@ -371,7 +372,6 @@ final class PixelforgeGenerationLifecycleTest extends TestCase
             ]
         );
     }
-
 
     public function test_timeout_recovery_preserves_idempotency_and_wallet(): void
     {
@@ -467,7 +467,7 @@ final class PixelforgeGenerationLifecycleTest extends TestCase
 
         // The queue fake captures the scheduled recovery job.
 
-        $exitCode = \Illuminate\Support\Facades\Artisan::call(
+        $exitCode = Artisan::call(
             'pixelforge:recover-submissions'
         );
 
@@ -606,5 +606,4 @@ final class PixelforgeGenerationLifecycleTest extends TestCase
             'status' => ProviderWebhookEvent::STATUS_PROCESSED,
         ]);
     }
-
 }

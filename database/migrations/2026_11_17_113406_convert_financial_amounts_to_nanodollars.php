@@ -1,9 +1,7 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -29,11 +27,25 @@ return new class extends Migration
             'reserved_after_units',
         ],
     ];
+
     /**
      * Run the migrations.
      */
     public function up(): void
     {
+        // Legacy monetary metadata cannot be converted generically. Check
+        // before touching any financial columns, even on databases whose
+        // migration runner does not wrap this migration in a transaction.
+        $hasMetadata = DB::table('wallet_transactions')
+            ->whereNotNull('metadata')
+            ->exists();
+
+        if ($hasMetadata) {
+            throw new RuntimeException(
+                'Convert monetary transaction metadata before migration.'
+            );
+        }
+
         foreach (self::COLUMNS as $table => $columns) {
             foreach ($columns as $column) {
                 // Fail rather than overflow a PostgreSQL BIGINT.
@@ -50,17 +62,6 @@ return new class extends Migration
             }
         }
 
-        // Legacy monetary metadata also needs conversion.
-        // Stop rather than silently corrupt an existing ledger.
-        $hasMetadata = DB::table('wallet_transactions')
-            ->whereNotNull('metadata')
-            ->exists();
-
-        if ($hasMetadata) {
-            throw new RuntimeException(
-                'Convert monetary transaction metadata before migration.'
-            );
-        }
     }
 
     /**

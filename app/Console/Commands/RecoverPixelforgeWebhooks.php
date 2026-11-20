@@ -2,15 +2,11 @@
 
 namespace App\Console\Commands;
 
-use Illuminate\Console\Attributes\Description;
-use Illuminate\Console\Attributes\Signature;
-use Illuminate\Console\Command;
-
 use App\Jobs\ProcessPixelforgeWebhook;
 use App\Models\ProviderWebhookEvent;
+use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Throwable;
-
 
 class RecoverPixelforgeWebhooks extends Command
 {

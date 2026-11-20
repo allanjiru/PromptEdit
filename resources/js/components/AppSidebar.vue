@@ -1,4 +1,3 @@
-
 <script setup lang="ts">
 import { Link } from '@inertiajs/vue3';
 import { LayoutGrid, Sparkles } from '@lucide/vue';

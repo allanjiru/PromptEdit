@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Generation;
 use App\Services\GenerationEstimateService;
 use App\Services\GenerationPricingService;
 use App\Services\WalletService;
@@ -26,10 +27,14 @@ class GenerationQuoteController extends Controller
                 'required',
                 'in:low,medium,high',
             ],
-            'reference_image_urls' => ['sometimes', 'array'],
+            'reference_image_urls' => [
+                'sometimes',
+                'array',
+                'max:'.Generation::MAX_REFERENCE_IMAGES,
+            ],
             'reference_image_urls.*' => [
                 'required',
-                'url',
+                'url:http,https',
                 'max:2048',
             ],
         ]);
@@ -53,14 +58,11 @@ class GenerationQuoteController extends Controller
 
         return response()->json([
             'estimated_charge_units' => $charge,
-            'estimated_charge_usd' =>
-                $pricing->formatUsd($charge),
+            'estimated_charge_usd' => $pricing->formatUsd($charge),
             'available_units' => $available,
-            'available_usd' =>
-                $pricing->formatUsd($available),
+            'available_usd' => $pricing->formatUsd($available),
             'reserved_units' => $reserved,
-            'reserved_usd' =>
-                $pricing->formatUsd($reserved),
+            'reserved_usd' => $pricing->formatUsd($reserved),
             'has_sufficient_balance' => $available >= $charge,
         ]);
     }

@@ -9,6 +9,7 @@ use Illuminate\Support\Str;
 final class GenerationSubmissionRecoveryService
 {
     private const DISPATCH_LEASE_SECONDS = 300;
+
     private const INITIAL_GRACE_SECONDS = 120;
 
     public function reserve(int $generationId): ?string
@@ -76,8 +77,7 @@ final class GenerationSubmissionRecoveryService
             }
 
             $eligible = match ($generation->submission_status) {
-                Generation::SUBMISSION_PENDING =>
-                    $generation->created_at !== null &&
+                Generation::SUBMISSION_PENDING => $generation->created_at !== null &&
                     $generation->created_at->lessThanOrEqualTo(
                         $now->copy()->subSeconds(
                             self::INITIAL_GRACE_SECONDS
@@ -89,13 +89,11 @@ final class GenerationSubmissionRecoveryService
                             ->lessThanOrEqualTo($now)
                     ),
 
-                Generation::SUBMISSION_UNCERTAIN =>
-                    $generation->submission_reconciliation_due_at !== null &&
+                Generation::SUBMISSION_UNCERTAIN => $generation->submission_reconciliation_due_at !== null &&
                     $generation->submission_reconciliation_due_at
                         ->lessThanOrEqualTo($now),
 
-                Generation::SUBMISSION_SUBMITTING =>
-                    $generation->submission_claimed_until !== null &&
+                Generation::SUBMISSION_SUBMITTING => $generation->submission_claimed_until !== null &&
                     $generation->submission_claimed_until
                         ->lessThanOrEqualTo($now),
 

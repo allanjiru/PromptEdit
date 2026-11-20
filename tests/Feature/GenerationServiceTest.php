@@ -22,7 +22,9 @@ final class GenerationServiceTest extends TestCase
     use RefreshDatabase;
 
     private GenerationService $generations;
+
     private WalletService $wallets;
+
     private User $user;
 
     protected function setUp(): void
@@ -50,6 +52,7 @@ final class GenerationServiceTest extends TestCase
     private function wallet(): array
     {
         $wallet = $this->user->wallet()->firstOrFail()->fresh();
+
         return [(int) $wallet->available_units, (int) $wallet->reserved_units];
     }
 
@@ -73,13 +76,10 @@ final class GenerationServiceTest extends TestCase
                 'prompt' => $generation->prompt,
                 'size' => $generation->image_size,
                 'quality' => $generation->quality,
-                'reference_images' =>
-                    $generation->reference_image_urls ?? [],
+                'reference_images' => $generation->reference_image_urls ?? [],
                 'metadata' => [
-                    'promptedit_generation_id' =>
-                        (string) $generation->id,
-                    'promptedit_request_key' =>
-                        (string) $generation->request_key,
+                    'promptedit_generation_id' => (string) $generation->id,
+                    'promptedit_request_key' => (string) $generation->request_key,
                 ],
             ],
             $generation->provider_request_payload
@@ -96,7 +96,6 @@ final class GenerationServiceTest extends TestCase
         $this->assertDatabaseCount('generations', 1);
         $this->assertDatabaseCount('wallet_reservations', 1);
     }
-
 
     public function test_retrying_same_request_preserves_provider_payload(): void
     {

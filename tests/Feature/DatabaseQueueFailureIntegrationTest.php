@@ -132,7 +132,7 @@ final class DatabaseQueueFailureIntegrationTest extends TestCase
             }
         );
 
-        $job = new AlwaysFailingQueueTestJob();
+        $job = new AlwaysFailingQueueTestJob;
 
         Queue::connection('database')->push(
             $job,

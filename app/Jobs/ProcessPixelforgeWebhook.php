@@ -2,14 +2,15 @@
 
 namespace App\Jobs;
 
+use App\Models\Generation;
 use App\Models\ProviderWebhookEvent;
+use App\Services\GenerationImagePersistenceDispatcher;
 use App\Services\PixelforgeClient;
 use App\Services\PixelforgeResultProcessor;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Facades\DB;
-use App\Models\Generation;
 use Throwable;
 
 class ProcessPixelforgeWebhook implements ShouldQueue
@@ -43,7 +44,8 @@ class ProcessPixelforgeWebhook implements ShouldQueue
 
     public function handle(
         PixelforgeClient $client,
-        PixelforgeResultProcessor $processor
+        PixelforgeResultProcessor $processor,
+        GenerationImagePersistenceDispatcher $images
     ): void {
         $event = ProviderWebhookEvent::findOrFail(
             $this->eventId
@@ -72,10 +74,12 @@ class ProcessPixelforgeWebhook implements ShouldQueue
             $event->provider_job_id
         );
 
-        $processor->process(
+        $updated = $processor->process(
             $event->provider_job_id,
             $providerResult
         );
+
+        $images->dispatchIfNeeded($updated);
 
         DB::transaction(function () use ($event) {
             $locked = ProviderWebhookEvent::query()
@@ -105,13 +109,12 @@ class ProcessPixelforgeWebhook implements ShouldQueue
             )
             ->update([
                 'status' => ProviderWebhookEvent::STATUS_FAILED,
-                'processing_error' =>
-                    substr(
-                        $exception?->getMessage()
-                            ?? 'Webhook processing failed.',
-                        0,
-                        2000
-                    ),
+                'processing_error' => substr(
+                    $exception?->getMessage()
+                        ?? 'Webhook processing failed.',
+                    0,
+                    2000
+                ),
             ]);
     }
 }

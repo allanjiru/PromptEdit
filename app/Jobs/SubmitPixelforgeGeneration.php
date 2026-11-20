@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Services\GenerationSubmissionClaimService;
 use App\Services\PixelforgeClient;
+use App\Services\PixelforgeReconciliationDispatcher;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
@@ -23,11 +24,13 @@ final class SubmitPixelforgeGeneration implements ShouldQueue
         public ?string $dispatchToken = null
     ) {}
 
+    /** @return list<int> */
     public function backoff(): array
     {
         return [10, 30, 120, 600, 900];
     }
 
+    /** @return list<object> */
     public function middleware(): array
     {
         return [
@@ -42,7 +45,8 @@ final class SubmitPixelforgeGeneration implements ShouldQueue
 
     public function handle(
         PixelforgeClient $client,
-        GenerationSubmissionClaimService $claims
+        GenerationSubmissionClaimService $claims,
+        ?PixelforgeReconciliationDispatcher $reconciliation = null
     ): void {
         $claim = $claims->acquire(
             $this->generationId,
@@ -70,11 +74,16 @@ final class SubmitPixelforgeGeneration implements ShouldQueue
                 );
             }
 
-            $claims->accepted(
+            $accepted = $claims->accepted(
                 $this->generationId,
                 $claim['token'],
                 $providerId
             );
+
+            if ($accepted) {
+                ($reconciliation ?? app(PixelforgeReconciliationDispatcher::class))
+                    ->dispatchInitial($this->generationId);
+            }
         } catch (Throwable $exception) {
             $claims->uncertain(
                 $this->generationId,

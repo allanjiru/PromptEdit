@@ -1,11 +1,5 @@
-
 <script setup lang="ts">
-import {
-    computed,
-    onBeforeUnmount,
-    ref,
-    watch,
-} from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Head } from '@inertiajs/vue3';
 import {
     AlertCircle,
@@ -13,12 +7,13 @@ import {
     Download,
     Image as ImageIcon,
     LoaderCircle,
+    Plus,
     RefreshCw,
     Sparkles,
     Wallet,
 } from '@lucide/vue';
-
 import { Button } from '@/components/ui/button';
+import WalletCredits from '@/components/WalletCredits.vue';
 import {
     Card,
     CardContent,
@@ -26,10 +21,30 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { index as studioIndex } from '@/routes/studio';
-
+import { Link } from '@inertiajs/vue3';
+import type { DemoCreditConfig, WalletSummary } from '@/types';
+import ReferenceUrlField from './ReferenceUrlField.vue';
+import {
+    GENERATION_STATUS_TIMEOUT_MS,
+    GENERATION_SUBMISSION_TIMEOUT_MS,
+    MAX_REFERENCE_IMAGES,
+    parseGenerationStatusResponse,
+    parseGenerationSubmissionResponse,
+    parseLatestGenerationResponse,
+    startRequestTimeout,
+    type GenerationSubmissionResponse,
+    type RequestTimeout,
+} from './generationApi';
+import {
+    generationDisplayStatus,
+    isGenerationProcessing,
+    shouldAutomaticallyRestoreGeneration,
+    shouldPollImageReadiness,
+    shouldPollGeneration,
+    type GenerationStatus,
+} from './generationState';
 defineOptions({
     layout: {
         breadcrumbs: [
@@ -40,16 +55,9 @@ defineOptions({
         ],
     },
 });
-
-type ImageSize =
-    | '1024x1024'
-    | '1536x1024'
-    | '1024x1536';
-
+type ImageSize = '1024x1024' | '1536x1024' | '1024x1536';
 type Quality = 'low' | 'medium' | 'high';
-
 type ValidationErrors = Record<string, string[]>;
-
 type Quote = {
     estimated_charge_units: number;
     estimated_charge_usd: string;
@@ -59,155 +67,158 @@ type Quote = {
     reserved_usd: string;
     has_sufficient_balance: boolean;
 };
-
-type GenerationResponse = {
-    id: number;
-    request_key: string;
-    status: string;
-    estimated_charge_units: number;
-    estimated_charge_usd: string;
-};
-
-type GenerationStatus = {
-    id: number;
-    status: string;
-    submission_status: string;
-    estimated_charge_usd: string;
-    customer_charge_usd: string | null;
-    result_image_urls: string[];
-    error_message: string | null;
-    completed_at: string | null;
-};
-
+const props = withDefaults(
+    defineProps<{
+        wallet?: WalletSummary;
+        demoCredits?: DemoCreditConfig;
+    }>(),
+    {
+        wallet: () => ({
+            available_units: 0,
+            available_usd: '0.000000000',
+            reserved_units: 0,
+            reserved_usd: '0.000000000',
+        }),
+        demoCredits: () => ({ enabled: false, packages: [] }),
+    },
+);
 const prompt = ref('');
 const imageSize = ref<ImageSize>('1024x1024');
 const quality = ref<Quality>('medium');
-const referenceUrl = ref('');
-
+const referenceUrlInputs = ref<string[]>(['']);
 const quote = ref<Quote | null>(null);
 const isQuoting = ref(false);
 const quoteError = ref('');
-
 const isSubmitting = ref(false);
 const errors = ref<ValidationErrors>({});
 const submissionError = ref('');
-
-const result = ref<GenerationResponse | null>(null);
+const result = ref<GenerationSubmissionResponse | null>(null);
 const generationStatus = ref<GenerationStatus | null>(null);
 const pollingError = ref('');
-
 const requestKey = ref<string | null>(null);
 const uncertainSubmission = ref(false);
-
+const wallet = ref<WalletSummary>({ ...props.wallet });
+const walletCreditsRef = ref<InstanceType<typeof WalletCredits> | null>(null);
 let quoteTimer: ReturnType<typeof setTimeout> | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
-
 let quoteController: AbortController | null = null;
 let statusController: AbortController | null = null;
 let submitController: AbortController | null = null;
-
+let readinessRetryController: AbortController | null = null;
+let statusTimeout: RequestTimeout | null = null;
+let submitTimeout: RequestTimeout | null = null;
 let quoteVersion = 0;
 let formVersion = 0;
 let pollVersion = 0;
+let readinessPollAttempts = 0;
+const MAX_READINESS_POLL_ATTEMPTS = 20;
 let disposed = false;
-
+let restoreController: AbortController | null = null;
+let restoreVersion = 0;
+let applyingRestoration = false;
 const promptLength = computed(() => prompt.value.length);
-
 const normalizedPrompt = computed(() => prompt.value.trim());
-const normalizedReference = computed(
-    () => referenceUrl.value.trim(),
+const normalizedReferences = computed(() =>
+    referenceUrlInputs.value.map((value) => value.trim()),
 );
-
 const referenceUrls = computed(() =>
-    normalizedReference.value
-        ? [normalizedReference.value]
-        : [],
+    normalizedReferences.value.filter((value) => value !== ''),
 );
-
-const hasValidForm = computed(() =>
-    normalizedPrompt.value.length > 0 &&
-    promptLength.value <= 5000 &&
-    (
-        !normalizedReference.value ||
-        isValidUrl(normalizedReference.value)
-    ),
-);
-
-const isTerminal = computed(() =>
-    generationStatus.value?.status === 'completed' ||
-    generationStatus.value?.status === 'failed',
-);
-
-const isProcessing = computed(() =>
-    !!result.value && !isTerminal.value,
-);
-
-const canSubmit = computed(() =>
-    hasValidForm.value &&
-    !isSubmitting.value &&
-    !result.value &&
-    (
-        uncertainSubmission.value ||
-        (
-            !!quote.value &&
-            quote.value.has_sufficient_balance &&
-            !isQuoting.value &&
-            !quoteError.value
+const invalidReferenceIndexes = computed(() =>
+    normalizedReferences.value
+        .map((value, index) =>
+            value !== '' && !isValidUrl(value) ? index : null,
         )
-    ),
+        .filter((index): index is number => index !== null),
 );
-
-const images = computed(
-    () => generationStatus.value?.result_image_urls ?? [],
+const hasValidForm = computed(
+    () =>
+        normalizedPrompt.value.length > 0 &&
+        promptLength.value <= 5000 &&
+        referenceUrls.value.length <= MAX_REFERENCE_IMAGES &&
+        invalidReferenceIndexes.value.length === 0,
 );
-
-const displayStatus = computed(() => {
-    if (!result.value) {
-        return 'Not started';
-    }
-
-    if (generationStatus.value?.status === 'completed') {
-        return 'Completed';
-    }
-
-    if (generationStatus.value?.status === 'failed') {
-        return 'Failed';
-    }
-
-    if (generationStatus.value?.status === 'processing') {
-        return 'Processing';
-    }
-
-    if (
-        generationStatus.value?.submission_status ===
-        'needs_review'
-    ) {
-        return 'Needs review';
-    }
-
-    return 'Queued';
-});
-
+const isProcessing = computed(() =>
+    isGenerationProcessing(!!result.value, generationStatus.value),
+);
+const canSubmit = computed(
+    () =>
+        hasValidForm.value &&
+        !isSubmitting.value &&
+        !result.value &&
+        (uncertainSubmission.value ||
+            (!!quote.value &&
+                quote.value.has_sufficient_balance &&
+                !isQuoting.value &&
+                !quoteError.value)),
+);
+const images = computed(() => generationStatus.value?.result_image_urls ?? []);
+const completedWithoutImages = computed(
+    () =>
+        generationStatus.value?.status === 'completed' &&
+        images.value.length === 0,
+);
+const isPreparingImage = computed(() =>
+    shouldPollImageReadiness(generationStatus.value),
+);
+const displayStatus = computed(() =>
+    generationDisplayStatus(!!result.value, generationStatus.value),
+);
+const referenceInputsDisabled = computed(
+    () => isSubmitting.value || !!result.value || uncertainSubmission.value,
+);
 function isValidUrl(value: string): boolean {
     try {
         const url = new URL(value);
-
-        return (
-            url.protocol === 'http:' ||
-            url.protocol === 'https:'
-        );
+        return url.protocol === 'http:' || url.protocol === 'https:';
     } catch {
         return false;
     }
 }
+function addReferenceUrl(): void {
+    if (
+        referenceUrlInputs.value.length >= MAX_REFERENCE_IMAGES ||
+        isSubmitting.value ||
+        result.value ||
+        uncertainSubmission.value
+    ) {
+        return;
+    }
 
+    referenceUrlInputs.value.push('');
+}
+function updateReferenceUrl(index: number, value: string | number): void {
+    referenceUrlInputs.value[index] = String(value);
+}
+function referenceError(index: number): string | undefined {
+    if (invalidReferenceIndexes.value.includes(index)) {
+        return 'Enter a valid HTTP or HTTPS URL.';
+    }
+
+    return errors.value[`reference_image_urls.${index}`]?.[0];
+}
+function canRemoveReference(index: number): boolean {
+    return (
+        referenceUrlInputs.value.length > 1 ||
+        referenceUrlInputs.value[index] !== ''
+    );
+}
+function removeReferenceUrl(index: number): void {
+    if (isSubmitting.value || result.value || uncertainSubmission.value) {
+        return;
+    }
+
+    referenceUrlInputs.value.splice(index, 1);
+
+    if (referenceUrlInputs.value.length === 0) {
+        referenceUrlInputs.value.push('');
+    }
+}
 function formatUsd(value: string | number): string {
     const amount = Number(value);
-
     if (!Number.isFinite(amount)) {
         return '—';
     }
-
     return new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: 'USD',
@@ -215,22 +226,17 @@ function formatUsd(value: string | number): string {
         maximumFractionDigits: 4,
     }).format(amount);
 }
-
 function csrfHeaders(): Record<string, string> {
     const meta = document.querySelector<HTMLMetaElement>(
         'meta[name="csrf-token"]',
     );
-
     const token = meta?.content;
-
     if (token) {
         return { 'X-CSRF-TOKEN': token };
     }
-
     const cookie = document.cookie
         .split('; ')
         .find((item) => item.startsWith('XSRF-TOKEN='));
-
     if (cookie) {
         return {
             'X-XSRF-TOKEN': decodeURIComponent(
@@ -238,10 +244,8 @@ function csrfHeaders(): Record<string, string> {
             ),
         };
     }
-
     return {};
 }
-
 function requestHeaders(): Record<string, string> {
     return {
         'Content-Type': 'application/json',
@@ -250,24 +254,19 @@ function requestHeaders(): Record<string, string> {
         ...csrfHeaders(),
     };
 }
-
 async function readJson(response: Response): Promise<unknown> {
-    const contentType =
-        response.headers.get('content-type') ?? '';
-
+    const contentType = response.headers.get('content-type') ?? '';
     if (!contentType.includes('application/json')) {
-        throw new Error(
-            'The server returned an unexpected response.',
-        );
+        throw new Error('The server returned an unexpected response.');
     }
 
-    return response.json();
+    try {
+        return await response.json();
+    } catch {
+        throw new Error('The server returned invalid JSON.');
+    }
 }
-
-function errorMessage(
-    body: unknown,
-    fallback: string,
-): string {
+function errorMessage(body: unknown, fallback: string): string {
     if (
         typeof body === 'object' &&
         body !== null &&
@@ -276,43 +275,57 @@ function errorMessage(
     ) {
         return body.message;
     }
-
     return fallback;
 }
+function onCreditsPurchased(updatedWallet: WalletSummary): void {
+    wallet.value = updatedWallet;
 
+    if (quote.value) {
+        quote.value = {
+            ...quote.value,
+            available_units: updatedWallet.available_units,
+            available_usd: updatedWallet.available_usd,
+            reserved_units: updatedWallet.reserved_units,
+            reserved_usd: updatedWallet.reserved_usd,
+            has_sufficient_balance:
+                updatedWallet.available_units >=
+                quote.value.estimated_charge_units,
+        };
+    }
+
+    if (hasValidForm.value && !result.value && !uncertainSubmission.value) {
+        void fetchQuote();
+    }
+}
 function stopPolling(): void {
     pollVersion++;
-
     if (pollTimer !== null) {
         clearTimeout(pollTimer);
         pollTimer = null;
     }
-
+    statusTimeout?.clear();
+    statusTimeout = null;
     statusController?.abort();
     statusController = null;
+    readinessRetryController?.abort();
+    readinessRetryController = null;
 }
-
 function cancelQuote(): void {
     quoteVersion++;
-
     if (quoteTimer !== null) {
         clearTimeout(quoteTimer);
         quoteTimer = null;
     }
-
     quoteController?.abort();
     quoteController = null;
     isQuoting.value = false;
 }
-
 function getRequestKey(): string {
     if (!requestKey.value) {
         requestKey.value = crypto.randomUUID();
     }
-
     return requestKey.value;
 }
-
 function generationPayload() {
     return {
         request_key: getRequestKey(),
@@ -322,27 +335,27 @@ function generationPayload() {
         reference_image_urls: referenceUrls.value,
     };
 }
-
 function onFormChanged(): void {
+    if (applyingRestoration) {
+        return;
+    }
+    restoreVersion++;
+    restoreController?.abort();
+    restoreController = null;
     formVersion++;
     cancelQuote();
-
     quote.value = null;
     quoteError.value = '';
     errors.value = {};
-
     // A submission with an uncertain outcome must not
     // silently become a new request with different inputs.
     if (uncertainSubmission.value || result.value) {
         return;
     }
-
     requestKey.value = null;
     submissionError.value = '';
-
     scheduleQuote();
 }
-
 function scheduleQuote(): void {
     if (
         disposed ||
@@ -352,13 +365,11 @@ function scheduleQuote(): void {
     ) {
         return;
     }
-
     quoteTimer = setTimeout(() => {
         quoteTimer = null;
         void fetchQuote();
     }, 450);
 }
-
 async function fetchQuote(): Promise<void> {
     if (
         disposed ||
@@ -368,16 +379,12 @@ async function fetchQuote(): Promise<void> {
     ) {
         return;
     }
-
     cancelQuote();
-
     const version = quoteVersion;
     const controller = new AbortController();
     quoteController = controller;
-
     isQuoting.value = true;
     quoteError.value = '';
-
     try {
         const response = await fetch('/generations/quote', {
             method: 'POST',
@@ -391,66 +398,57 @@ async function fetchQuote(): Promise<void> {
             }),
             signal: controller.signal,
         });
-
         const body = await readJson(response);
-
         if (!response.ok) {
             throw new Error(
-                errorMessage(
-                    body,
-                    'Unable to calculate the price.',
-                ),
+                errorMessage(body, 'Unable to calculate the price.'),
             );
         }
-
-        if (
-            disposed ||
-            version !== quoteVersion ||
-            controller.signal.aborted
-        ) {
+        if (disposed || version !== quoteVersion || controller.signal.aborted) {
             return;
         }
-
         quote.value = body as Quote;
+        wallet.value = {
+            available_units: quote.value.available_units,
+            available_usd: quote.value.available_usd,
+            reserved_units: quote.value.reserved_units,
+            reserved_usd: quote.value.reserved_usd,
+        };
     } catch (error) {
-        if (
-            disposed ||
-            version !== quoteVersion ||
-            controller.signal.aborted
-        ) {
+        if (disposed || version !== quoteVersion || controller.signal.aborted) {
             return;
         }
-
         quote.value = null;
         quoteError.value =
             error instanceof Error
                 ? error.message
                 : 'Unable to calculate the price.';
     } finally {
-        if (
-            !disposed &&
-            version === quoteVersion
-        ) {
+        if (!disposed && version === quoteVersion) {
             isQuoting.value = false;
             quoteController = null;
         }
     }
 }
-
 async function submitGeneration(): Promise<void> {
     if (!canSubmit.value) {
         return;
     }
-
+    restoreVersion++;
+    restoreController?.abort();
+    restoreController = null;
     cancelQuote();
     isSubmitting.value = true;
     submissionError.value = '';
     errors.value = {};
-
     const version = formVersion;
     const controller = new AbortController();
+    const timeout = startRequestTimeout(
+        controller,
+        GENERATION_SUBMISSION_TIMEOUT_MS,
+    );
     submitController = controller;
-
+    submitTimeout = timeout;
     try {
         const response = await fetch('/generations', {
             method: 'POST',
@@ -459,126 +457,125 @@ async function submitGeneration(): Promise<void> {
             body: JSON.stringify(generationPayload()),
             signal: controller.signal,
         });
-
         const body = await readJson(response);
-
         if (
             disposed ||
             version !== formVersion ||
-            controller.signal.aborted
+            (controller.signal.aborted && !timeout.didTimeout())
         ) {
             return;
         }
-
+        if (timeout.didTimeout()) {
+            throw new Error('Submission confirmation timed out.');
+        }
         if (response.status === 422) {
             const validation = body as {
                 errors?: ValidationErrors;
                 message?: string;
             };
-
             errors.value = validation.errors ?? {};
-            submissionError.value =
-                validation.message ?? 'Check your inputs.';
-
+            submissionError.value = validation.message ?? 'Check your inputs.';
             // The server explicitly rejected this request.
             uncertainSubmission.value = false;
             return;
         }
-
         if (response.status !== 202) {
             submissionError.value = errorMessage(
                 body,
                 'The request could not be confirmed. Retry using the same request key.',
             );
-
             // For an ambiguous server error, retain the key.
-            uncertainSubmission.value =
-                response.status >= 500;
-
+            uncertainSubmission.value = response.status >= 500;
             return;
         }
-
-        result.value = body as GenerationResponse;
+        const submissionBody = body as { wallet?: WalletSummary };
+        if (submissionBody.wallet) {
+            wallet.value = submissionBody.wallet;
+        }
+        result.value = parseGenerationSubmissionResponse(body, getRequestKey());
         uncertainSubmission.value = false;
         generationStatus.value = null;
         pollingError.value = '';
-
         startPolling(result.value.id);
-    } catch {
+    } catch (error) {
         if (
             disposed ||
             version !== formVersion ||
-            controller.signal.aborted
+            (controller.signal.aborted && !timeout.didTimeout())
         ) {
             return;
         }
-
         uncertainSubmission.value = true;
-        submissionError.value =
-            'The submission outcome is uncertain. Retry to check the request using the same request key.';
+        submissionError.value = timeout.didTimeout()
+            ? 'Submission confirmation timed out. The generation may still have been accepted. Retry with the same request key to recover its status safely.'
+            : error instanceof Error
+              ? `${error.message} Retry with the same request key to recover its status safely.`
+              : 'The submission outcome is uncertain. Retry with the same request key to recover its status safely.';
     } finally {
+        timeout.clear();
+        if (submitTimeout === timeout) {
+            submitTimeout = null;
+        }
         if (!disposed) {
             isSubmitting.value = false;
             submitController = null;
         }
     }
 }
-
 function startPolling(id: number): void {
     stopPolling();
-
+    readinessPollAttempts = 0;
     const version = pollVersion;
-
     async function poll(): Promise<void> {
         if (disposed || version !== pollVersion) {
             return;
         }
-
         const controller = new AbortController();
+        const timeout = startRequestTimeout(
+            controller,
+            GENERATION_STATUS_TIMEOUT_MS,
+        );
         statusController = controller;
-
+        statusTimeout = timeout;
         try {
-            const response = await fetch(
-                `/generations/${id}`,
-                {
-                    method: 'GET',
-                    credentials: 'same-origin',
-                    headers: {
-                        Accept: 'application/json',
-                        'X-Requested-With': 'XMLHttpRequest',
-                    },
-                    signal: controller.signal,
+            const response = await fetch(`/generations/${id}`, {
+                method: 'GET',
+                credentials: 'same-origin',
+                headers: {
+                    Accept: 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
                 },
-            );
-
+                signal: controller.signal,
+            });
             const body = await readJson(response);
-
             if (!response.ok) {
                 throw new Error(
-                    errorMessage(
-                        body,
-                        'Unable to retrieve generation status.',
-                    ),
+                    errorMessage(body, 'Unable to retrieve generation status.'),
                 );
             }
-
             if (
                 disposed ||
                 version !== pollVersion ||
-                controller.signal.aborted
+                (controller.signal.aborted && !timeout.didTimeout())
             ) {
                 return;
             }
-
-            generationStatus.value =
-                body as GenerationStatus;
-
+            if (timeout.didTimeout()) {
+                throw new Error('The status request timed out.');
+            }
+            generationStatus.value = parseGenerationStatusResponse(body, id);
             pollingError.value = '';
+            if (shouldPollImageReadiness(generationStatus.value)) {
+                readinessPollAttempts++;
 
-            if (
-                generationStatus.value.status === 'completed' ||
-                generationStatus.value.status === 'failed'
-            ) {
+                if (readinessPollAttempts >= MAX_READINESS_POLL_ATTEMPTS) {
+                    pollingError.value =
+                        'Image preparation is taking longer than expected. Retry image preparation.';
+
+                    return;
+                }
+            }
+            if (generationStatus.value.status === 'failed') {
                 // Refresh wallet information on the next
                 // generation, when a new quote is requested.
                 return;
@@ -587,7 +584,78 @@ function startPolling(id: number): void {
             if (
                 disposed ||
                 version !== pollVersion ||
-                controller.signal.aborted
+                (controller.signal.aborted && !timeout.didTimeout())
+            ) {
+                return;
+            }
+            pollingError.value = timeout.didTimeout()
+                ? 'The status request timed out. Studio will try again automatically.'
+                : error instanceof Error
+                  ? error.message
+                  : 'Status update failed.';
+        } finally {
+            timeout.clear();
+            if (statusTimeout === timeout) {
+                statusTimeout = null;
+            }
+            if (!disposed && version === pollVersion) {
+                statusController = null;
+                if (
+                    shouldPollGeneration(generationStatus.value) ||
+                    (shouldPollImageReadiness(generationStatus.value) &&
+                        readinessPollAttempts < MAX_READINESS_POLL_ATTEMPTS)
+                ) {
+                    pollTimer = setTimeout(() => void poll(), 3000);
+                }
+            }
+        }
+    }
+    void poll();
+}
+async function retryStatus(): Promise<void> {
+    if (!result.value) {
+        return;
+    }
+
+    const id = result.value.id;
+    const version = pollVersion;
+
+    if (shouldPollImageReadiness(generationStatus.value)) {
+        pollingError.value = '';
+        const controller = new AbortController();
+        readinessRetryController?.abort();
+        readinessRetryController = controller;
+
+        try {
+            const response = await fetch(`/generations/${id}/images/retry`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: requestHeaders(),
+                body: JSON.stringify({}),
+                signal: controller.signal,
+            });
+
+            if (
+                disposed ||
+                controller.signal.aborted ||
+                version !== pollVersion ||
+                result.value?.id !== id
+            ) {
+                return;
+            }
+
+            if (!response.ok) {
+                const body = await readJson(response);
+                throw new Error(
+                    errorMessage(body, 'Unable to retry image preparation.'),
+                );
+            }
+        } catch (error) {
+            if (
+                disposed ||
+                controller.signal.aborted ||
+                version !== pollVersion ||
+                result.value?.id !== id
             ) {
                 return;
             }
@@ -595,82 +663,153 @@ function startPolling(id: number): void {
             pollingError.value =
                 error instanceof Error
                     ? error.message
-                    : 'Status update failed.';
+                    : 'Unable to retry image preparation.';
         } finally {
-            if (
-                !disposed &&
-                version === pollVersion
-            ) {
-                statusController = null;
-
-                if (
-                    !isTerminal.value &&
-                    generationStatus.value
-                        ?.submission_status !== 'needs_review'
-                ) {
-                    pollTimer = setTimeout(
-                        () => void poll(),
-                        3000,
-                    );
-                }
+            if (readinessRetryController === controller) {
+                readinessRetryController = null;
             }
         }
     }
 
-    void poll();
-}
-
-function retryStatus(): void {
-    if (result.value) {
-        startPolling(result.value.id);
+    if (!disposed && version === pollVersion && result.value?.id === id) {
+        startPolling(id);
     }
 }
-
 function resetForm(): void {
     if (isSubmitting.value) {
         return;
     }
-
+    restoreVersion++;
+    restoreController?.abort();
+    restoreController = null;
     formVersion++;
     stopPolling();
     cancelQuote();
-
     prompt.value = '';
     imageSize.value = '1024x1024';
     quality.value = 'medium';
-    referenceUrl.value = '';
-
+    referenceUrlInputs.value = [''];
     requestKey.value = null;
     uncertainSubmission.value = false;
-
     quote.value = null;
     quoteError.value = '';
     result.value = null;
     generationStatus.value = null;
-
     errors.value = {};
     submissionError.value = '';
     pollingError.value = '';
 }
-
-watch(
-    [prompt, imageSize, quality, referenceUrl],
-    onFormChanged,
-);
-
+watch([prompt, imageSize, quality, referenceUrlInputs], onFormChanged, {
+    deep: true,
+    flush: 'sync',
+});
+onMounted(() => {
+    void restoreLatestGeneration();
+});
 onBeforeUnmount(() => {
+    restoreVersion++;
+    restoreController?.abort();
+    restoreController = null;
     disposed = true;
     formVersion++;
-
     cancelQuote();
     stopPolling();
+    submitTimeout?.clear();
+    submitTimeout = null;
     submitController?.abort();
 });
+async function restoreLatestGeneration(): Promise<void> {
+    const version = ++restoreVersion;
+    restoreController?.abort();
+    const controller = new AbortController();
+    restoreController = controller;
+    try {
+        const response = await fetch('/generations/latest', {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            signal: controller.signal,
+        });
+        const body = await readJson(response);
+        if (!response.ok) {
+            throw new Error(
+                errorMessage(body, 'Unable to restore your latest generation.'),
+            );
+        }
+        if (
+            disposed ||
+            controller.signal.aborted ||
+            version !== restoreVersion
+        ) {
+            return;
+        }
+        const generation = parseLatestGenerationResponse(body);
+        const studioIsPristine =
+            !result.value &&
+            !isSubmitting.value &&
+            !uncertainSubmission.value &&
+            requestKey.value === null &&
+            prompt.value === '' &&
+            referenceUrlInputs.value.length === 1 &&
+            referenceUrlInputs.value[0] === '' &&
+            imageSize.value === '1024x1024' &&
+            quality.value === 'medium';
+        if (
+            !generation ||
+            !shouldAutomaticallyRestoreGeneration(generation, studioIsPristine)
+        ) {
+            return;
+        }
+        applyingRestoration = true;
+        try {
+            prompt.value = generation.prompt;
+            imageSize.value = generation.image_size;
+            quality.value = generation.quality;
+            referenceUrlInputs.value = generation.reference_image_urls.length
+                ? [...generation.reference_image_urls]
+                : [''];
+        } finally {
+            applyingRestoration = false;
+        }
+        requestKey.value = generation.request_key;
+        result.value = {
+            id: generation.id,
+            request_key: generation.request_key,
+            status: generation.status,
+            estimated_charge_units: generation.estimated_charge_units,
+            estimated_charge_usd: generation.estimated_charge_usd,
+        };
+        generationStatus.value = generation;
+        uncertainSubmission.value = false;
+        submissionError.value = '';
+        pollingError.value = '';
+        errors.value = {};
+        cancelQuote();
+        quote.value = null;
+        if (shouldPollGeneration(generationStatus.value)) {
+            startPolling(generation.id);
+        }
+    } catch (error) {
+        if (
+            disposed ||
+            controller.signal.aborted ||
+            version !== restoreVersion
+        ) {
+            return;
+        }
+        console.error('Generation restoration failed:', error);
+    } finally {
+        if (restoreController === controller) {
+            restoreController = null;
+        }
+    }
+}
 </script>
-
 <template>
     <Head title="Create Image" />
-
     <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
         <div class="space-y-2">
             <div class="flex items-center gap-2">
@@ -679,56 +818,51 @@ onBeforeUnmount(() => {
                     Create Image
                 </h1>
             </div>
-
             <p class="text-sm text-muted-foreground">
                 Turn your ideas into images with Pixelforge.
             </p>
+            <Link
+                href="/generations"
+                class="inline-flex items-center rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+            >
+                View history
+            </Link>
         </div>
-
-        <div
-            class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]"
-        >
+        <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
             <div class="space-y-6">
                 <Card>
                     <CardHeader>
                         <CardTitle>Image Generation</CardTitle>
                         <CardDescription>
-                            Describe your image and choose
-                            your generation settings.
+                            Describe your image and choose your generation
+                            settings.
                         </CardDescription>
                     </CardHeader>
-
                     <CardContent>
                         <form
                             class="space-y-6"
                             @submit.prevent="submitGeneration"
                         >
                             <div class="space-y-2">
-                                <div
-                                    class="flex items-center justify-between"
-                                >
+                                <div class="flex items-center justify-between">
                                     <Label for="prompt">Prompt</Label>
-                                    <span
-                                        class="text-xs text-muted-foreground"
-                                    >
+                                    <span class="text-xs text-muted-foreground">
                                         {{ promptLength }} / 5000
                                     </span>
                                 </div>
-
                                 <textarea
                                     id="prompt"
                                     v-model="prompt"
                                     rows="7"
                                     maxlength="5000"
                                     placeholder="Describe the image you want to create..."
-                                    class="flex w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                                    class="flex w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
                                     :disabled="
                                         isSubmitting ||
                                         !!result ||
                                         uncertainSubmission
                                     "
                                 />
-
                                 <p
                                     v-if="errors.prompt?.length"
                                     class="text-sm text-destructive"
@@ -736,13 +870,9 @@ onBeforeUnmount(() => {
                                     {{ errors.prompt[0] }}
                                 </p>
                             </div>
-
                             <div class="grid gap-4 sm:grid-cols-2">
                                 <div class="space-y-2">
-                                    <Label for="image-size">
-                                        Image Size
-                                    </Label>
-
+                                    <Label for="image-size"> Image Size </Label>
                                     <select
                                         id="image-size"
                                         v-model="imageSize"
@@ -763,7 +893,6 @@ onBeforeUnmount(() => {
                                             Portrait — 1024 × 1536
                                         </option>
                                     </select>
-
                                     <p
                                         v-if="errors.image_size?.length"
                                         class="text-sm text-destructive"
@@ -771,12 +900,8 @@ onBeforeUnmount(() => {
                                         {{ errors.image_size[0] }}
                                     </p>
                                 </div>
-
                                 <div class="space-y-2">
-                                    <Label for="quality">
-                                        Quality
-                                    </Label>
-
+                                    <Label for="quality"> Quality </Label>
                                     <select
                                         id="quality"
                                         v-model="quality"
@@ -787,17 +912,10 @@ onBeforeUnmount(() => {
                                             uncertainSubmission
                                         "
                                     >
-                                        <option value="low">
-                                            Low
-                                        </option>
-                                        <option value="medium">
-                                            Medium
-                                        </option>
-                                        <option value="high">
-                                            High
-                                        </option>
+                                        <option value="low">Low</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="high">High</option>
                                     </select>
-
                                     <p
                                         v-if="errors.quality?.length"
                                         class="text-sm text-destructive"
@@ -806,44 +924,84 @@ onBeforeUnmount(() => {
                                     </p>
                                 </div>
                             </div>
-
-                            <div class="space-y-2">
-                                <Label for="reference-url">
-                                    Reference Image URL
-                                    <span
-                                        class="text-muted-foreground"
+                            <fieldset class="space-y-3">
+                                <div
+                                    class="flex flex-wrap items-center justify-between gap-2"
+                                >
+                                    <div>
+                                        <Label>Reference Image URLs</Label>
+                                        <p
+                                            class="mt-1 text-xs text-muted-foreground"
+                                        >
+                                            Optional · up to
+                                            {{ MAX_REFERENCE_IMAGES }} URLs
+                                        </p>
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        :disabled="
+                                            referenceUrlInputs.length >=
+                                                MAX_REFERENCE_IMAGES ||
+                                            isSubmitting ||
+                                            !!result ||
+                                            uncertainSubmission
+                                        "
+                                        @click="addReferenceUrl"
                                     >
-                                        (optional)
-                                    </span>
-                                </Label>
+                                        <Plus class="mr-2 size-4" />
+                                        Add reference
+                                    </Button>
+                                </div>
 
-                                <Input
-                                    id="reference-url"
-                                    v-model="referenceUrl"
-                                    type="url"
-                                    placeholder="https://example.com/reference.png"
-                                    :disabled="
-                                        isSubmitting ||
-                                        !!result ||
-                                        uncertainSubmission
-                                    "
+                                <ReferenceUrlField
+                                    :index="0"
+                                    :value="referenceUrlInputs[0] ?? ''"
+                                    :disabled="referenceInputsDisabled"
+                                    :can-remove="canRemoveReference(0)"
+                                    :error="referenceError(0)"
+                                    @update="updateReferenceUrl(0, $event)"
+                                    @remove="removeReferenceUrl(0)"
+                                />
+                                <ReferenceUrlField
+                                    v-if="referenceUrlInputs.length > 1"
+                                    :index="1"
+                                    :value="referenceUrlInputs[1] ?? ''"
+                                    :disabled="referenceInputsDisabled"
+                                    :can-remove="canRemoveReference(1)"
+                                    :error="referenceError(1)"
+                                    @update="updateReferenceUrl(1, $event)"
+                                    @remove="removeReferenceUrl(1)"
+                                />
+                                <ReferenceUrlField
+                                    v-if="referenceUrlInputs.length > 2"
+                                    :index="2"
+                                    :value="referenceUrlInputs[2] ?? ''"
+                                    :disabled="referenceInputsDisabled"
+                                    :can-remove="canRemoveReference(2)"
+                                    :error="referenceError(2)"
+                                    @update="updateReferenceUrl(2, $event)"
+                                    @remove="removeReferenceUrl(2)"
+                                />
+                                <ReferenceUrlField
+                                    v-if="referenceUrlInputs.length > 3"
+                                    :index="3"
+                                    :value="referenceUrlInputs[3] ?? ''"
+                                    :disabled="referenceInputsDisabled"
+                                    :can-remove="canRemoveReference(3)"
+                                    :error="referenceError(3)"
+                                    @update="updateReferenceUrl(3, $event)"
+                                    @remove="removeReferenceUrl(3)"
                                 />
 
                                 <p
-                                    v-if="
-                                        errors['reference_image_urls.0']
-                                            ?.length
-                                    "
+                                    v-if="errors.reference_image_urls?.length"
                                     class="text-sm text-destructive"
                                 >
-                                    {{
-                                        errors[
-                                            'reference_image_urls.0'
-                                        ][0]
-                                    }}
+                                    {{ errors.reference_image_urls[0] }}
                                 </p>
-                            </div>
-
+                            </fieldset>
                             <div
                                 v-if="submissionError"
                                 role="alert"
@@ -851,7 +1009,6 @@ onBeforeUnmount(() => {
                             >
                                 {{ submissionError }}
                             </div>
-
                             <div
                                 v-if="result"
                                 class="rounded-lg border border-border bg-muted/30 p-4"
@@ -869,7 +1026,6 @@ onBeforeUnmount(() => {
                                             {{ displayStatus }}
                                         </p>
                                     </div>
-
                                     <CheckCircle2
                                         v-if="
                                             generationStatus?.status ===
@@ -877,7 +1033,6 @@ onBeforeUnmount(() => {
                                         "
                                         class="size-5 text-green-600"
                                     />
-
                                     <AlertCircle
                                         v-else-if="
                                             generationStatus?.status ===
@@ -885,36 +1040,38 @@ onBeforeUnmount(() => {
                                         "
                                         class="size-5 text-destructive"
                                     />
-
                                     <LoaderCircle
                                         v-else-if="isProcessing"
                                         class="size-5 animate-spin text-primary"
                                     />
                                 </div>
-
                                 <p
-                                    v-if="
-                                        generationStatus?.error_message
-                                    "
+                                    v-if="generationStatus?.error_message"
                                     class="mt-3 text-sm text-destructive"
                                 >
-                                    {{
-                                        generationStatus.error_message
-                                    }}
+                                    {{ generationStatus.error_message }}
                                 </p>
-
                                 <p
                                     v-if="pollingError"
                                     class="mt-3 text-sm text-destructive"
                                 >
                                     {{ pollingError }}
                                 </p>
-
+                                <p
+                                    v-if="
+                                        generationStatus?.reconciliation_paused
+                                    "
+                                    class="mt-3 text-sm text-muted-foreground"
+                                >
+                                    Automatic provider checks are paused. The
+                                    generation remains accepted and can still
+                                    complete from a trusted provider update.
+                                </p>
                                 <Button
                                     v-if="
                                         pollingError ||
-                                        generationStatus
-                                            ?.submission_status ===
+                                        generationStatus?.reconciliation_paused ||
+                                        generationStatus?.submission_status ===
                                             'needs_review'
                                     "
                                     type="button"
@@ -927,21 +1084,13 @@ onBeforeUnmount(() => {
                                     Refresh status
                                 </Button>
                             </div>
-
                             <div class="flex flex-wrap gap-3">
-                                <Button
-                                    type="submit"
-                                    :disabled="!canSubmit"
-                                >
+                                <Button type="submit" :disabled="!canSubmit">
                                     <LoaderCircle
                                         v-if="isSubmitting"
                                         class="mr-2 size-4 animate-spin"
                                     />
-                                    <Sparkles
-                                        v-else
-                                        class="mr-2 size-4"
-                                    />
-
+                                    <Sparkles v-else class="mr-2 size-4" />
                                     {{
                                         isSubmitting
                                             ? 'Submitting...'
@@ -950,7 +1099,6 @@ onBeforeUnmount(() => {
                                               : 'Generate Image'
                                     }}
                                 </Button>
-
                                 <Button
                                     type="button"
                                     variant="outline"
@@ -960,60 +1108,45 @@ onBeforeUnmount(() => {
                                     New Generation
                                 </Button>
                             </div>
-
                             <p
                                 v-if="uncertainSubmission"
                                 class="text-xs text-muted-foreground"
                             >
-                                Retrying uses the original
-                                request key to avoid creating
-                                a duplicate generation.
+                                Retrying uses the original request key to avoid
+                                creating a duplicate generation.
                             </p>
                         </form>
                     </CardContent>
                 </Card>
-
                 <Card>
                     <CardHeader>
-                        <CardTitle
-                            class="flex items-center gap-2"
-                        >
+                        <CardTitle class="flex items-center gap-2">
                             <Wallet class="size-5" />
                             Pricing & Wallet
                         </CardTitle>
                         <CardDescription>
-                            Estimates include the 25% service markup.
-                            Final charges depend on actual usage.
+                            Estimates include the 25% service markup. Final
+                            charges depend on actual usage.
                         </CardDescription>
                     </CardHeader>
-
                     <CardContent class="space-y-4">
                         <div
                             v-if="isQuoting"
                             class="flex items-center gap-2 text-sm text-muted-foreground"
                         >
-                            <LoaderCircle
-                                class="size-4 animate-spin"
-                            />
+                            <LoaderCircle class="size-4 animate-spin" />
                             Calculating estimate...
                         </div>
-
                         <p
                             v-else-if="quoteError"
                             class="text-sm text-destructive"
                         >
                             {{ quoteError }}
                         </p>
-
-                        <div
-                            v-else-if="quote"
-                            class="space-y-4"
-                        >
-                            <div class="grid gap-4 sm:grid-cols-3">
+                        <div v-else-if="quote" class="space-y-4">
+                            <div>
                                 <div>
-                                    <p
-                                        class="text-xs text-muted-foreground"
-                                    >
+                                    <p class="text-xs text-muted-foreground">
                                         Estimated charge
                                     </p>
                                     <p class="text-xl font-semibold">
@@ -1024,76 +1157,45 @@ onBeforeUnmount(() => {
                                         }}
                                     </p>
                                 </div>
-
-                                <div>
-                                    <p
-                                        class="text-xs text-muted-foreground"
-                                    >
-                                        Available credits
-                                    </p>
-                                    <p class="text-xl font-semibold">
-                                        {{
-                                            formatUsd(
-                                                quote.available_usd,
-                                            )
-                                        }}
-                                    </p>
-                                </div>
-
-                                <div>
-                                    <p
-                                        class="text-xs text-muted-foreground"
-                                    >
-                                        Reserved credits
-                                    </p>
-                                    <p class="text-xl font-semibold">
-                                        {{
-                                            formatUsd(
-                                                quote.reserved_usd,
-                                            )
-                                        }}
-                                    </p>
-                                </div>
                             </div>
-
                             <div
                                 v-if="!quote.has_sufficient_balance"
                                 role="alert"
                                 class="flex gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
                             >
-                                <AlertCircle
-                                    class="mt-0.5 size-4 shrink-0"
-                                />
-                                Insufficient credits for this
-                                estimated reservation.
+                                <AlertCircle class="mt-0.5 size-4 shrink-0" />
+                                <div class="space-y-2">
+                                    <p>
+                                        Generate is unavailable because this
+                                        estimate exceeds your available credits.
+                                    </p>
+                                    <Button
+                                        v-if="demoCredits.enabled"
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        @click="walletCreditsRef?.open()"
+                                    >
+                                        Buy Credits
+                                    </Button>
+                                </div>
                             </div>
                         </div>
-
-                        <div
-                            v-else-if="result"
-                            class="space-y-2 text-sm"
-                        >
-                            <div
-                                class="flex justify-between gap-3"
-                            >
+                        <div v-else-if="result" class="space-y-2 text-sm">
+                            <div class="flex justify-between gap-3">
                                 <span class="text-muted-foreground">
                                     Estimated charge
                                 </span>
                                 <span class="font-medium">
-                                    {{
-                                        formatUsd(
-                                            result.estimated_charge_usd,
-                                        )
-                                    }}
+                                    {{ formatUsd(result.estimated_charge_usd) }}
                                 </span>
                             </div>
-
                             <div
                                 v-if="
-                                    generationStatus
-                                        ?.customer_charge_usd !== null &&
-                                    generationStatus
-                                        ?.customer_charge_usd !== undefined
+                                    generationStatus?.customer_charge_usd !==
+                                        null &&
+                                    generationStatus?.customer_charge_usd !==
+                                        undefined
                                 "
                                 class="flex justify-between gap-3"
                             >
@@ -1109,18 +1211,19 @@ onBeforeUnmount(() => {
                                 </span>
                             </div>
                         </div>
-
-                        <p
-                            v-else
-                            class="text-sm text-muted-foreground"
-                        >
-                            Enter a prompt to see the
-                            estimated price and wallet balance.
+                        <p v-else class="text-sm text-muted-foreground">
+                            Enter a prompt to see the estimated price and wallet
+                            balance.
                         </p>
+                        <WalletCredits
+                            ref="walletCreditsRef"
+                            :wallet="wallet"
+                            :demo-credits="demoCredits"
+                            @purchased="onCreditsPurchased"
+                        />
                     </CardContent>
                 </Card>
             </div>
-
             <Card class="h-fit">
                 <CardHeader>
                     <CardTitle class="flex items-center gap-2">
@@ -1131,12 +1234,8 @@ onBeforeUnmount(() => {
                         Your generated images appear here.
                     </CardDescription>
                 </CardHeader>
-
                 <CardContent class="space-y-4">
-                    <div
-                        v-if="images.length"
-                        class="space-y-4"
-                    >
+                    <div v-if="images.length" class="space-y-4">
                         <div
                             v-for="(url, index) in images"
                             :key="`${index}-${url}`"
@@ -1147,36 +1246,31 @@ onBeforeUnmount(() => {
                                 :alt="`Generated image ${index + 1}`"
                                 class="h-auto w-full object-contain"
                             />
-
                             <div
                                 class="flex items-center justify-between gap-2 border-t border-border p-3"
                             >
-                                <span
-                                    class="text-xs text-muted-foreground"
-                                >
+                                <span class="text-xs text-muted-foreground">
                                     Image {{ index + 1 }}
                                 </span>
-
-                                <Button
-                                    as-child
-                                    size="sm"
-                                    variant="outline"
-                                >
+                                <Button as-child size="sm" variant="outline">
                                     <a
                                         :href="url"
                                         target="_blank"
                                         rel="noopener noreferrer"
                                     >
-                                        <Download
-                                            class="mr-2 size-4"
-                                        />
+                                        <Download class="mr-2 size-4" />
                                         Open image
                                     </a>
                                 </Button>
                             </div>
                         </div>
+                        <p
+                            v-if="isPreparingImage"
+                            class="text-sm text-muted-foreground"
+                        >
+                            Preparing the remaining images...
+                        </p>
                     </div>
-
                     <div
                         v-else
                         class="flex aspect-square items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center"
@@ -1186,25 +1280,41 @@ onBeforeUnmount(() => {
                                 v-if="isProcessing"
                                 class="mx-auto size-10 animate-spin text-primary"
                             />
-
+                            <LoaderCircle
+                                v-else-if="isPreparingImage"
+                                class="mx-auto size-10 animate-spin text-primary"
+                            />
                             <ImageIcon
                                 v-else
                                 class="mx-auto size-10 text-muted-foreground"
                             />
-
-                            <p
-                                class="text-sm text-muted-foreground"
-                            >
+                            <p class="text-sm text-muted-foreground">
                                 {{
                                     isProcessing
                                         ? 'Generating your image...'
-                                        : 'No image to preview yet.'
+                                        : isPreparingImage
+                                          ? 'Preparing your image...'
+                                          : completedWithoutImages
+                                            ? 'Generation completed, but its image is not available yet.'
+                                            : 'No image to preview yet.'
                                 }}
                             </p>
                         </div>
                     </div>
-
-                    <p v-if="generationStatus?.status === 'completed'" class="text-sm text-muted-foreground">
+                    <Button
+                        v-if="isPreparingImage && pollingError"
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        @click="retryStatus"
+                    >
+                        <RefreshCw class="mr-2 size-4" />
+                        Retry image preparation
+                    </Button>
+                    <p
+                        v-if="generationStatus?.status === 'completed'"
+                        class="text-sm text-muted-foreground"
+                    >
                         Generation completed successfully.
                     </p>
                 </CardContent>

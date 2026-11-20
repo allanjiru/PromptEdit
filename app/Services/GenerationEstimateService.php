@@ -52,15 +52,15 @@ class GenerationEstimateService
             $tokens['reasoning'][$quality]['max'] ?? null;
 
         if (
-            !is_int($charactersPerToken) ||
+            ! is_int($charactersPerToken) ||
             $charactersPerToken <= 0 ||
-            !is_numeric($variance) ||
+            ! is_numeric($variance) ||
             (float) $variance < 0 ||
-            !is_int($referenceTokens) ||
+            ! is_int($referenceTokens) ||
             $referenceTokens < 0 ||
-            !is_int($outputTokens) ||
+            ! is_int($outputTokens) ||
             $outputTokens < 0 ||
-            !is_int($reasoningMax) ||
+            ! is_int($reasoningMax) ||
             $reasoningMax < 0
         ) {
             throw new InvalidArgumentException(
@@ -78,8 +78,7 @@ class GenerationEstimateService
 
         $usage = [
             'input_text_tokens' => $textTokens,
-            'input_image_tokens' =>
-                count($referenceUrls) * $referenceTokens,
+            'input_image_tokens' => count($referenceUrls) * $referenceTokens,
             'output_tokens' => $outputTokens,
             'reasoning_tokens' => $reasoningMax,
         ];
@@ -96,8 +95,7 @@ class GenerationEstimateService
         return [
             'estimated_provider_units' => $providerUnits,
             'estimated_charge_units' => $customerUnits,
-            'estimated_charge_usd' =>
-                $this->pricing->formatUsd($customerUnits),
+            'estimated_charge_usd' => $this->pricing->formatUsd($customerUnits),
             'estimated_usage' => $usage,
         ];
     }

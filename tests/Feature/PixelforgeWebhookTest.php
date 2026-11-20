@@ -6,7 +6,6 @@ use App\Jobs\ProcessPixelforgeWebhook;
 use App\Models\ProviderWebhookEvent;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
-use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class PixelforgeWebhookTest extends TestCase
@@ -292,7 +291,6 @@ class PixelforgeWebhookTest extends TestCase
         );
     }
 
-    
     public function test_real_provider_webhook_shape_is_accepted(): void
     {
         $payload = $this->payload();
@@ -350,6 +348,4 @@ class PixelforgeWebhookTest extends TestCase
             ProcessPixelforgeWebhook::class
         );
     }
-
-
 }

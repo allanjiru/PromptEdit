@@ -9,8 +9,10 @@ use App\Services\GenerationService;
 use App\Services\GenerationSubmissionClaimService;
 use App\Services\GenerationSubmissionRecoveryService;
 use App\Services\WalletService;
+use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -143,10 +145,8 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
         Queue::fake();
 
         $generation = $this->generation([
-            'submission_status' =>
-                Generation::SUBMISSION_UNCERTAIN,
-            'submission_reconciliation_due_at' =>
-                now()->subMinute(),
+            'submission_status' => Generation::SUBMISSION_UNCERTAIN,
+            'submission_reconciliation_due_at' => now()->subMinute(),
         ]);
 
         Artisan::call('pixelforge:recover-submissions');
@@ -172,10 +172,8 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
         Queue::fake();
 
         $this->generation([
-            'submission_status' =>
-                Generation::SUBMISSION_UNCERTAIN,
-            'submission_reconciliation_due_at' =>
-                now()->addMinutes(5),
+            'submission_status' => Generation::SUBMISSION_UNCERTAIN,
+            'submission_reconciliation_due_at' => now()->addMinutes(5),
         ]);
 
         Artisan::call('pixelforge:recover-submissions');
@@ -190,12 +188,9 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
         Queue::fake();
 
         $generation = $this->generation([
-            'submission_status' =>
-                Generation::SUBMISSION_SUBMITTING,
-            'submission_claim_token' =>
-                (string) Str::uuid(),
-            'submission_claimed_until' =>
-                now()->subMinute(),
+            'submission_status' => Generation::SUBMISSION_SUBMITTING,
+            'submission_claim_token' => (string) Str::uuid(),
+            'submission_claimed_until' => now()->subMinute(),
         ]);
 
         Artisan::call('pixelforge:recover-submissions');
@@ -214,12 +209,9 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
         Queue::fake();
 
         $this->generation([
-            'submission_status' =>
-                Generation::SUBMISSION_SUBMITTING,
-            'submission_claim_token' =>
-                (string) Str::uuid(),
-            'submission_claimed_until' =>
-                now()->addMinutes(5),
+            'submission_status' => Generation::SUBMISSION_SUBMITTING,
+            'submission_claim_token' => (string) Str::uuid(),
+            'submission_claimed_until' => now()->addMinutes(5),
         ]);
 
         Artisan::call('pixelforge:recover-submissions');
@@ -402,7 +394,6 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
         );
     }
 
-    
     public function test_stale_recovery_token_cannot_acquire_after_lease_replacement(): void
     {
         $generation = $this->oldPendingGeneration();
@@ -498,7 +489,7 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
     {
         $generation = $this->oldPendingGeneration();
 
-        $before = \Illuminate\Support\Facades\DB::table(
+        $before = DB::table(
             'wallet_reservations'
         )->where(
             'generation_id',
@@ -531,8 +522,7 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
         $generation->refresh();
 
         $generation->forceFill([
-            'submission_reconciliation_due_at' =>
-                now()->subMinute(),
+            'submission_reconciliation_due_at' => now()->subMinute(),
         ])->save();
 
         $secondToken = $this->recovery->reserve(
@@ -541,7 +531,7 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
 
         $this->assertNotNull($secondToken);
 
-        $after = \Illuminate\Support\Facades\DB::table(
+        $after = DB::table(
             'wallet_reservations'
         )->where(
             'generation_id',
@@ -555,22 +545,20 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
 
     public function test_recovery_skips_generation_requiring_manual_review(): void
     {
-        \Illuminate\Support\Facades\Queue::fake();
+        Queue::fake();
 
         $generation = $this->oldPendingGeneration();
 
         $generation->forceFill([
-            'submission_status' =>
-                Generation::SUBMISSION_NEEDS_REVIEW,
-            'submission_last_error' =>
-                'Manual reconciliation required',
+            'submission_status' => Generation::SUBMISSION_NEEDS_REVIEW,
+            'submission_last_error' => 'Manual reconciliation required',
         ])->save();
 
-        \Illuminate\Support\Facades\Artisan::call(
+        Artisan::call(
             'pixelforge:recover-submissions'
         );
 
-        \Illuminate\Support\Facades\Queue::assertNotPushed(
+        Queue::assertNotPushed(
             SubmitPixelforgeGeneration::class
         );
 
@@ -579,20 +567,20 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
 
     public function test_recovery_respects_dispatch_limit(): void
     {
-        \Illuminate\Support\Facades\Queue::fake();
+        Queue::fake();
 
         for ($i = 0; $i < 3; $i++) {
             $this->oldPendingGeneration();
         }
 
-        $exitCode = \Illuminate\Support\Facades\Artisan::call(
+        $exitCode = Artisan::call(
             'pixelforge:recover-submissions',
             ['--limit' => 2]
         );
 
         $this->assertSame(0, $exitCode);
 
-        \Illuminate\Support\Facades\Queue::assertPushed(
+        Queue::assertPushed(
             SubmitPixelforgeGeneration::class,
             2
         );
@@ -617,13 +605,13 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
 
         // Preserve the real dispatcher before replacing it.
         $originalDispatcher = app(
-            \Illuminate\Contracts\Bus\Dispatcher::class
+            Dispatcher::class
         );
 
         $failureTriggered = false;
 
         $dispatcher = \Mockery::mock(
-            \Illuminate\Contracts\Bus\Dispatcher::class
+            Dispatcher::class
         );
 
         $dispatcher->shouldReceive('dispatch')
@@ -648,7 +636,7 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
 
         // Replace the dispatcher used by the command.
         $this->app->instance(
-            \Illuminate\Contracts\Bus\Dispatcher::class,
+            Dispatcher::class,
             $dispatcher
         );
 
@@ -656,7 +644,7 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
         // Suppress reporting during this expected failure test.
         $this->withoutExceptionHandling();
 
-        $exitCode = \Illuminate\Support\Facades\Artisan::call(
+        $exitCode = Artisan::call(
             'pixelforge:recover-submissions'
         );
 
@@ -694,20 +682,20 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
 
         // Restore the original Laravel dispatcher.
         $this->app->instance(
-            \Illuminate\Contracts\Bus\Dispatcher::class,
+            Dispatcher::class,
             $originalDispatcher
         );
 
         // Fake successful queue dispatch.
-        \Illuminate\Support\Facades\Queue::fake();
+        Queue::fake();
 
-        $retryExitCode = \Illuminate\Support\Facades\Artisan::call(
+        $retryExitCode = Artisan::call(
             'pixelforge:recover-submissions'
         );
 
         $this->assertSame(0, $retryExitCode);
 
-        \Illuminate\Support\Facades\Queue::assertPushed(
+        Queue::assertPushed(
             SubmitPixelforgeGeneration::class,
             1
         );
@@ -747,5 +735,4 @@ final class RecoverPixelforgeSubmissionsTest extends TestCase
 
         $this->assertReservationActive($generation);
     }
-
 }
