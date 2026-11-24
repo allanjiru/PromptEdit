@@ -159,6 +159,30 @@ describe('WalletCredits', () => {
         });
     });
 
+    it('creates a valid request key when randomUUID is unavailable', async () => {
+        vi.stubGlobal('crypto', {
+            getRandomValues: (bytes: Uint8Array) => bytes.fill(1),
+        });
+        const fetchMock = vi.fn(async () => purchaseResponse());
+        vi.stubGlobal('fetch', fetchMock);
+        const wrapper = mountWallet();
+
+        await selectStarter(wrapper);
+        await wrapper
+            .get('[data-testid="confirm-credit-purchase"]')
+            .trigger('click');
+        await flush();
+
+        const submittedBody = fetchMock.mock.calls[0][1]?.body;
+        if (typeof submittedBody !== 'string') {
+            throw new Error('Expected a JSON request body.');
+        }
+
+        expect(JSON.parse(submittedBody).request_key).toBe(
+            '01010101-0101-4101-8101-010101010101',
+        );
+    });
+
     it('disables purchase controls while loading and prevents double submission', async () => {
         let resolve!: (response: Response) => void;
         vi.stubGlobal(

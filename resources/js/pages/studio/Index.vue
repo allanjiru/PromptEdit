@@ -21,6 +21,7 @@ import {
 } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import WalletCredits from '@/components/WalletCredits.vue';
+import { createRequestKey } from '@/lib/requestKey';
 import {
     Card,
     CardContent,
@@ -329,7 +330,7 @@ function cancelQuote(): void {
 }
 function getRequestKey(): string {
     if (!requestKey.value) {
-        requestKey.value = crypto.randomUUID();
+        requestKey.value = createRequestKey();
     }
     return requestKey.value;
 }

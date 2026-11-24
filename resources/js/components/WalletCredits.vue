@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import { CheckCircle2, CreditCard, LoaderCircle } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
+import { createRequestKey } from '@/lib/requestKey';
 import type {
     DemoCreditConfig,
     DemoCreditPackage,
@@ -99,7 +100,7 @@ function selectPackage(packageId: string): void {
 async function purchase(): Promise<void> {
     if (!selectedPackage.value || isPurchasing.value) return;
 
-    requestKey.value ??= crypto.randomUUID();
+    requestKey.value ??= createRequestKey();
     isPurchasing.value = true;
     purchaseError.value = '';
     purchaseSuccess.value = '';
