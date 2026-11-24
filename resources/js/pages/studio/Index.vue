@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import {
+    computed,
+    nextTick,
+    onBeforeUnmount,
+    onMounted,
+    ref,
+    watch,
+} from 'vue';
 import { Head } from '@inertiajs/vue3';
 import {
     AlertCircle,
@@ -705,6 +712,13 @@ watch([prompt, imageSize, quality, referenceUrlInputs], onFormChanged, {
 });
 onMounted(() => {
     void restoreLatestGeneration();
+
+    if (
+        props.demoCredits.enabled &&
+        new URLSearchParams(window.location.search).get('credits') === 'buy'
+    ) {
+        void nextTick(() => walletCreditsRef.value?.open());
+    }
 });
 onBeforeUnmount(() => {
     restoreVersion++;

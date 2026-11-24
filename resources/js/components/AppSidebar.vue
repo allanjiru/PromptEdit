@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { Link } from '@inertiajs/vue3';
-import { LayoutGrid, Sparkles } from '@lucide/vue';
+import { Link, usePage } from '@inertiajs/vue3';
+import { CreditCard, LayoutGrid, Sparkles } from '@lucide/vue';
+import { computed } from 'vue';
 
 import AppLogo from '@/components/AppLogo.vue';
 import NavMain from '@/components/NavMain.vue';
@@ -21,18 +22,24 @@ import { index as studioIndex } from '@/routes/studio';
 
 import type { NavItem } from '@/types';
 
-const mainNavItems: NavItem[] = [
-    {
-        title: 'Create Image',
-        href: studioIndex(),
-        icon: Sparkles,
-    },
-    {
-        title: 'Dashboard',
-        href: dashboard(),
-        icon: LayoutGrid,
-    },
-];
+const page = usePage();
+
+const mainNavItems = computed<NavItem[]>(() => {
+    const items: NavItem[] = [
+        {
+            title: 'Create Image',
+            href: studioIndex(),
+            icon: Sparkles,
+        },
+        {
+            title: 'Dashboard',
+            href: dashboard(),
+            icon: LayoutGrid,
+        },
+    ];
+
+    return items;
+});
 </script>
 
 <template>

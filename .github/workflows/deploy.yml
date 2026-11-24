@@ -1,0 +1,388 @@
+
+name: deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promptedit-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Test and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: promptedit_test
+          POSTGRES_USER: allannjiru
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U allannjiru -d promptedit_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      APP_ENV: testing
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: promptedit_test
+      DB_USERNAME: allannjiru
+      DB_PASSWORD: ""
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: bcmath, pdo_pgsql
+          tools: composer:v2
+          coverage: none
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup application
+        run: composer setup
+
+      - name: Run CI checks
+        run: composer ci:check
+
+      - name: Build production assets
+        run: |
+          set -euo pipefail
+
+          npm ci
+          npm run build
+
+          test -d public/build
+          test -f public/build/manifest.json
+
+      - name: Prepare deployment package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p release
+
+          for path in \
+            app \
+            bootstrap \
+            config \
+            database \
+            public \
+            resources \
+            routes \
+            lang \
+            artisan \
+            composer.json \
+            composer.lock
+          do
+            if [ -e "$path" ]; then
+              cp -a "$path" release/
+            fi
+          done
+
+          # Exclude generated and sensitive files.
+          find release -type f \
+            \( -name '.env' -o -name '.env.*' \) \
+            -delete
+
+          rm -rf \
+            release/storage \
+            release/vendor \
+            release/node_modules \
+            release/bootstrap/cache \
+            release/public/storage \
+            release/public/hot
+
+          test -f release/artisan
+          test -f release/composer.json
+          test -f release/composer.lock
+          test -f release/public/build/manifest.json
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptedit-release
+          path: release/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 3
+
+  deploy:
+    name: Deploy to production
+    needs: build
+
+    if: github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    environment:
+      name: production
+
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL }}
+
+    steps:
+      - name: Download deployment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: promptedit-release
+          path: release
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_PATH"
+
+          if [[ "$DEPLOY_PATH" != /* ]]; then
+            echo "::error::DEPLOY_PATH must be absolute"
+            exit 1
+          fi
+
+          if [[ "$DEPLOY_PATH" == "/" ]]; then
+            echo "::error::DEPLOY_PATH cannot be /"
+            exit 1
+          fi
+
+          test -f release/artisan
+          test -f release/composer.json
+          test -f release/composer.lock
+
+          echo "Deployment configuration validated"
+
+      - name: Install SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Configure trusted SSH host
+        shell: bash
+        env:
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::error::DEPLOY_KNOWN_HOSTS is required"
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" \
+            > ~/.ssh/known_hosts
+
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Prepare SSH connection
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PORT="${DEPLOY_PORT:-22}"
+
+          if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+            echo "::error::Invalid SSH port"
+            exit 1
+          fi
+
+          printf -v REMOTE_PATH '%q' "$DEPLOY_PATH"
+
+          {
+            echo "REMOTE_PATH=$REMOTE_PATH"
+            echo "DEPLOY_SSH_PORT=$PORT"
+          } >> "$GITHUB_ENV"
+
+          ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=10 \
+            -p "$PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "test -d $REMOTE_PATH &&
+             test -f $REMOTE_PATH/.env &&
+             test -f $REMOTE_PATH/artisan &&
+             command -v composer &&
+             command -v php"
+
+      - name: Enable maintenance mode
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd $REMOTE_PATH &&
+             php artisan down --retry=60"
+
+      - name: Sync application files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rsync -az \
+            --delete \
+            --delay-updates \
+            --exclude='/.env' \
+            --exclude='/.env.*' \
+            --exclude='/storage/' \
+            --exclude='/vendor/' \
+            --exclude='/node_modules/' \
+            --exclude='/bootstrap/cache/' \
+            --exclude='/public/storage' \
+            --exclude='/public/hot' \
+            --exclude='/.git/' \
+            --exclude='/.github/' \
+            -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p $DEPLOY_SSH_PORT" \
+            release/ \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+      - name: Install production dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "bash -s -- $REMOTE_PATH" <<'REMOTE'
+          set -euo pipefail
+
+          APP_PATH="$1"
+          cd "$APP_PATH"
+
+          composer install \
+            --no-dev \
+            --prefer-dist \
+            --optimize-autoloader \
+            --no-interaction \
+            --no-progress
+
+          rm -f public/hot
+
+          echo "Production dependencies installed"
+          REMOTE
+
+      - name: Run migration preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd $REMOTE_PATH &&
+             php artisan deployment:migration-preflight"
+
+      - name: Run database migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd $REMOTE_PATH &&
+             php artisan migrate --force"
+
+      - name: Optimize Laravel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd $REMOTE_PATH &&
+             php artisan optimize &&
+             php artisan queue:restart"
+
+      - name: Disable maintenance mode
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -p "$DEPLOY_SSH_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd $REMOTE_PATH &&
+             php artisan up"
+
+      - name: Verify production health
+        if: ${{ env.DEPLOY_HEALTH_URL != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --retry 5 \
+            --retry-delay 2 \
+            --retry-connrefused \
+            --max-time 15 \
+            "$DEPLOY_HEALTH_URL"
+
+          echo "Production health check passed"
+
+      - name: Deployment successful
+        run: |
+          echo "PromptEdit deployed successfully"
+          echo "Commit: $GITHUB_SHA"
+
+      - name: Deployment failure instructions
+        if: failure()
+        run: |
+          echo "::error::Production deployment failed."
+          echo "::warning::Check application logs."
+          echo "::warning::Check whether maintenance mode remains active."
+          echo "::warning::Verify application health before running php artisan up."
