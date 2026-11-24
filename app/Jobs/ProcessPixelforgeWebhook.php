@@ -25,11 +25,13 @@ class ProcessPixelforgeWebhook implements ShouldQueue
         public int $eventId
     ) {}
 
+    /** @return list<int> */
     public function backoff(): array
     {
         return [10, 30, 60, 120, 300, 600, 900];
     }
 
+    /** @return list<WithoutOverlapping> */
     public function middleware(): array
     {
         return [

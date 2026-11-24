@@ -20,6 +20,8 @@ class GenerationService
      *
      * The estimate must come from trusted backend pricing,
      * not a value submitted by the browser.
+     *
+     * @param  list<string>  $referenceUrls
      */
     public function create(
         User $user,
@@ -192,6 +194,8 @@ class GenerationService
 
     /**
      * Finalize a successful provider job and its charge.
+     *
+     * @param  list<string>  $resultImageUrls
      */
     public function succeed(
         Generation $generation,

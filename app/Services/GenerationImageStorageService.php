@@ -63,7 +63,7 @@ class GenerationImageStorageService
 
         $urls = $generation->result_image_urls ?? [];
 
-        if (! is_array($urls) || $urls === []) {
+        if ($urls === []) {
             throw new RuntimeException('No generation images available.');
         }
 

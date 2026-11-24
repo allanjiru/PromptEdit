@@ -17,6 +17,8 @@ class PixelforgeResultProcessor
      *
      * The caller must authenticate webhook payloads
      * or obtain results directly through PixelforgeClient.
+     *
+     * @param  array<string, mixed>  $payload
      */
     public function process(
         string $providerJobId,
@@ -85,6 +87,7 @@ class PixelforgeResultProcessor
         );
     }
 
+    /** @param array<string, mixed> $payload */
     private function processSuccess(
         Generation $generation,
         array $payload
@@ -192,6 +195,7 @@ class PixelforgeResultProcessor
         );
     }
 
+    /** @param array<string, mixed> $payload */
     private function processFailure(
         Generation $generation,
         array $payload

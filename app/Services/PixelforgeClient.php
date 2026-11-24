@@ -35,6 +35,10 @@ class PixelforgeClient
      * Retry orchestration belongs to the queue job,
      * not this method.
      *
+     * @param  list<string>  $referenceImages
+     * @param  array<string, mixed>  $metadata
+     * @return array<array-key, mixed>
+     *
      * @throws RequestException
      */
     public function createGeneration(
@@ -74,6 +78,7 @@ class PixelforgeClient
         return $data;
     }
 
+    /** @return array<array-key, mixed> */
     public function retrieveGeneration(
         string $providerJobId
     ): array {
@@ -92,6 +97,7 @@ class PixelforgeClient
             ->json();
     }
 
+    /** @return array<array-key, mixed> */
     public function pricing(): array
     {
         return Http::baseUrl(
@@ -104,6 +110,7 @@ class PixelforgeClient
             ->json();
     }
 
+    /** @return array<array-key, mixed> */
     public function usage(
         string $startDate,
         string $endDate
@@ -117,6 +124,10 @@ class PixelforgeClient
             ->json();
     }
 
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<array-key, mixed>
+     */
     public function createGenerationFromPayload(
         string $idempotencyKey,
         array $payload

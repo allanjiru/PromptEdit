@@ -5,6 +5,18 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * @property int $id
+ * @property int $wallet_id
+ * @property int|null $generation_id
+ * @property string $type
+ * @property string $idempotency_key
+ * @property int $available_delta_units
+ * @property int $reserved_delta_units
+ * @property int $available_after_units
+ * @property int $reserved_after_units
+ * @property array<string, mixed>|null $metadata
+ */
 class WalletTransaction extends Model
 {
     public const TYPE_DEMO_CREDIT = 'demo_credit';
@@ -39,11 +51,13 @@ class WalletTransaction extends Model
         ];
     }
 
+    /** @return BelongsTo<Wallet, $this> */
     public function wallet(): BelongsTo
     {
         return $this->belongsTo(Wallet::class);
     }
 
+    /** @return BelongsTo<Generation, $this> */
     public function generation(): BelongsTo
     {
         return $this->belongsTo(Generation::class);

@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use Carbon\CarbonImmutable;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Middleware\TrustProxies;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -26,8 +27,28 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        $this->configureTrustedProxies();
         $this->configureDefaults();
         $this->configureRateLimiting();
+    }
+
+    protected function configureTrustedProxies(): void
+    {
+        $configured = config('trustedproxy.proxies', []);
+
+        if (! is_array($configured)) {
+            return;
+        }
+
+        $proxies = array_values(array_filter(
+            $configured,
+            static fn (mixed $proxy): bool => is_string($proxy)
+                && $proxy !== ''
+        ));
+
+        if ($proxies !== []) {
+            TrustProxies::at($proxies);
+        }
     }
 
     protected function configureRateLimiting(): void

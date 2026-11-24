@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Generation;
+use App\Models\Wallet;
 use App\Services\GenerationEstimateService;
 use App\Services\GenerationPricingService;
 use App\Services\WalletService;
@@ -48,8 +49,8 @@ class GenerationQuoteController extends Controller
 
         $wallets->ensureWallet($request->user());
 
-        $wallet = $request->user()
-            ->wallet()
+        $wallet = Wallet::query()
+            ->where('user_id', $request->user()->getKey())
             ->firstOrFail();
 
         $available = $wallet->available_units;

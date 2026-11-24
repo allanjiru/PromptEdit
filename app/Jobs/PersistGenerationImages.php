@@ -23,6 +23,7 @@ class PersistGenerationImages implements ShouldBeUnique, ShouldQueue
         public int $generationId
     ) {}
 
+    /** @return list<int> */
     public function backoff(): array
     {
         return [15, 60, 180, 600];
@@ -33,6 +34,7 @@ class PersistGenerationImages implements ShouldBeUnique, ShouldQueue
         return (string) $this->generationId;
     }
 
+    /** @return list<WithoutOverlapping> */
     public function middleware(): array
     {
         return [

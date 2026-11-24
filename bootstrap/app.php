@@ -8,11 +8,6 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets;
 use Illuminate\Http\Request;
 
-$trustedProxies = array_values(array_filter(array_map(
-    'trim',
-    explode(',', (string) env('TRUSTED_PROXIES', ''))
-)));
-
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         api: __DIR__.'/../routes/api.php',
@@ -20,13 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
-    ->withMiddleware(function (Middleware $middleware) use (
-        $trustedProxies
-    ): void {
-        if ($trustedProxies !== []) {
-            $middleware->trustProxies(at: $trustedProxies);
-        }
-
+    ->withMiddleware(function (Middleware $middleware): void {
         $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);
 
         $middleware->web(append: [

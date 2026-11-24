@@ -44,20 +44,6 @@ final class GenerationSubmissionRecoveryService
                 return null;
             }
 
-            if (
-                ! in_array(
-                    $generation->submission_status,
-                    [
-                        Generation::SUBMISSION_PENDING,
-                        Generation::SUBMISSION_UNCERTAIN,
-                        Generation::SUBMISSION_SUBMITTING,
-                    ],
-                    true
-                )
-            ) {
-                return null;
-            }
-
             // Do not dispatch while another recovery
             // dispatch reservation is still active.
             if (
@@ -121,11 +107,12 @@ final class GenerationSubmissionRecoveryService
         }, 3);
     }
 
+    /** @return list<int> */
     public function candidates(int $limit): array
     {
         $now = now();
 
-        return Generation::query()
+        $ids = Generation::query()
             ->whereNull('provider_job_id')
             ->whereNotIn('status', [
                 Generation::STATUS_COMPLETED,
@@ -208,7 +195,13 @@ final class GenerationSubmissionRecoveryService
             })
             ->orderBy('id')
             ->limit($limit)
-            ->pluck('id')
+            ->get(['id'])
+            ->map(
+                static fn (Generation $generation): int => $generation->id
+            )
+            ->values()
             ->all();
+
+        return array_values($ids);
     }
 }

@@ -16,6 +16,9 @@ class GenerationPricingService
      * tokens = 1000
      * rate = "40.00"
      * cost = $0.040000000
+     *
+     * @param  array<array-key, mixed>  $usage
+     * @param  array<array-key, mixed>  $rates
      */
     public function providerCostUnits(
         array $usage,
@@ -44,6 +47,7 @@ class GenerationPricingService
 
             if (
                 ! is_string($rate) ||
+                ! is_numeric($rate) ||
                 ! preg_match(
                     '/^\d+(?:\.\d{1,9})?$/',
                     $rate
@@ -137,6 +141,7 @@ class GenerationPricingService
             .$whole.'.'.$fraction;
     }
 
+    /** @param numeric-string $value */
     private function toSafeInteger(string $value): int
     {
         if (

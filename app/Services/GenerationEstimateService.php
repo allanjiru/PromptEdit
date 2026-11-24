@@ -13,6 +13,15 @@ class GenerationEstimateService
         private readonly GenerationPricingService $pricing,
     ) {}
 
+    /**
+     * @param  list<string>  $referenceUrls
+     * @return array{
+     *     estimated_provider_units: int,
+     *     estimated_charge_units: int,
+     *     estimated_charge_usd: string,
+     *     estimated_usage: array<string, int>
+     * }
+     */
     public function estimate(
         string $prompt,
         string $size,

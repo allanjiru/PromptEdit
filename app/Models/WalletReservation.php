@@ -2,9 +2,19 @@
 
 namespace App\Models;
 
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * @property int $id
+ * @property int $wallet_id
+ * @property int $generation_id
+ * @property int $amount_units
+ * @property string $status
+ * @property CarbonInterface|null $settled_at
+ * @property CarbonInterface|null $released_at
+ */
 class WalletReservation extends Model
 {
     public const STATUS_ACTIVE = 'active';
@@ -29,11 +39,13 @@ class WalletReservation extends Model
         ];
     }
 
+    /** @return BelongsTo<Wallet, $this> */
     public function wallet(): BelongsTo
     {
         return $this->belongsTo(Wallet::class);
     }
 
+    /** @return BelongsTo<Generation, $this> */
     public function generation(): BelongsTo
     {
         return $this->belongsTo(Generation::class);

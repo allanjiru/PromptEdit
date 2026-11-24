@@ -11,6 +11,13 @@ final class GenerationSubmissionClaimService
 {
     private const LEASE_SECONDS = 120;
 
+    /**
+     * @return array{
+     *     token: string,
+     *     request_key: string,
+     *     payload: array<string, mixed>
+     * }|null
+     */
     public function acquire(
         int $generationId,
         ?string $dispatchToken = null

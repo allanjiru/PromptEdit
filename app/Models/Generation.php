@@ -10,7 +10,34 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 /**
  * @property array<int, mixed>|null $result_image_urls
+ * @property array<int, string>|null $reference_image_urls
+ * @property array<string, mixed>|null $provider_request_payload
+ * @property int $id
+ * @property int $user_id
+ * @property string $request_key
+ * @property string|null $provider_job_id
+ * @property string $prompt
+ * @property string $image_size
+ * @property string $quality
+ * @property string $status
+ * @property int|null $estimated_charge_units
+ * @property int|null $provider_cost_units
+ * @property int|null $customer_charge_units
+ * @property string|null $error_message
+ * @property string $submission_status
+ * @property int $submission_attempts
+ * @property string|null $submission_claim_token
+ * @property string|null $recovery_dispatch_token
+ * @property string|null $submission_last_error
+ * @property CarbonInterface|null $created_at
+ * @property CarbonInterface|null $updated_at
+ * @property CarbonInterface|null $submitted_at
  * @property CarbonInterface|null $completed_at
+ * @property CarbonInterface|null $failed_at
+ * @property CarbonInterface|null $submission_last_attempted_at
+ * @property CarbonInterface|null $submission_reconciliation_due_at
+ * @property CarbonInterface|null $submission_claimed_until
+ * @property CarbonInterface|null $recovery_dispatch_until
  * @property int $result_reconciliation_attempts
  * @property CarbonInterface|null $result_reconciliation_due_at
  * @property string|null $result_reconciliation_claim_token
