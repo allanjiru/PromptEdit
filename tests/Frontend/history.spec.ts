@@ -90,6 +90,31 @@ afterEach(() => {
 });
 
 describe('Generation History', () => {
+    it('styles each lifecycle status as a distinct badge', () => {
+        const wrapper = mountHistory([
+            generation('completed'),
+            generation('failed', { id: 2 }),
+            generation('processing', { id: 3 }),
+            generation('queued', { id: 4 }),
+        ]);
+
+        expect(wrapper.get('[data-status="completed"]').classes()).toContain(
+            'bg-emerald-50',
+        );
+        expect(wrapper.get('[data-status="failed"]').classes()).toContain(
+            'bg-red-50',
+        );
+        expect(wrapper.get('[data-status="processing"]').classes()).toContain(
+            'bg-blue-50',
+        );
+        expect(wrapper.get('[data-status="queued"]').classes()).toContain(
+            'bg-amber-50',
+        );
+        expect(
+            wrapper.get('[data-status="processing"] svg').classes(),
+        ).toContain('animate-spin');
+    });
+
     it('displays estimated, settled, pending, failed, and review charges', () => {
         const wrapper = mountHistory([
             generation('completed', { charge_usd: '0.059450003' }),

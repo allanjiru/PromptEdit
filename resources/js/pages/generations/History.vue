@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Head, Link, router } from '@inertiajs/vue3';
+import { CheckCircle2, Clock3, LoaderCircle, XCircle } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 type Generation = {
@@ -71,6 +72,21 @@ function finalCharge(generation: Generation): string {
     }
 
     return `$${generation.charge_usd}`;
+}
+
+function statusBadgeClasses(status: string): string {
+    switch (status) {
+        case 'completed':
+            return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/50 dark:text-emerald-300';
+        case 'failed':
+            return 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/70 dark:bg-red-950/50 dark:text-red-300';
+        case 'processing':
+            return 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/70 dark:bg-blue-950/50 dark:text-blue-300';
+        case 'queued':
+            return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/50 dark:text-amber-300';
+        default:
+            return 'border-border bg-muted text-muted-foreground';
+    }
 }
 
 function hasActiveGeneration(): boolean {
@@ -235,8 +251,30 @@ onBeforeUnmount(() => {
                 <div class="space-y-4 p-5">
                     <div class="flex items-center justify-between gap-2">
                         <span
-                            class="rounded-full bg-muted px-3 py-1 text-xs font-medium capitalize"
+                            :data-status="generation.status"
+                            class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold capitalize"
+                            :class="statusBadgeClasses(generation.status)"
                         >
+                            <CheckCircle2
+                                v-if="generation.status === 'completed'"
+                                class="size-3.5"
+                                aria-hidden="true"
+                            />
+                            <XCircle
+                                v-else-if="generation.status === 'failed'"
+                                class="size-3.5"
+                                aria-hidden="true"
+                            />
+                            <LoaderCircle
+                                v-else-if="generation.status === 'processing'"
+                                class="size-3.5 animate-spin"
+                                aria-hidden="true"
+                            />
+                            <Clock3
+                                v-else-if="generation.status === 'queued'"
+                                class="size-3.5"
+                                aria-hidden="true"
+                            />
                             {{ generation.status }}
                         </span>
 
