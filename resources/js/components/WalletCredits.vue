@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { CheckCircle2, CreditCard, LoaderCircle } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
+import { csrfHeaders } from '@/lib/csrf';
 import { createRequestKey } from '@/lib/requestKey';
 import type {
     DemoCreditConfig,
@@ -45,26 +46,6 @@ function formatUsd(value: string | number): string {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     }).format(amount);
-}
-
-function csrfHeaders(): Record<string, string> {
-    const token = document.querySelector<HTMLMetaElement>(
-        'meta[name="csrf-token"]',
-    )?.content;
-
-    if (token) return { 'X-CSRF-TOKEN': token };
-
-    const cookie = document.cookie
-        .split('; ')
-        .find((item) => item.startsWith('XSRF-TOKEN='));
-
-    return cookie
-        ? {
-              'X-XSRF-TOKEN': decodeURIComponent(
-                  cookie.substring('XSRF-TOKEN='.length),
-              ),
-          }
-        : {};
 }
 
 function serverMessage(body: unknown, fallback: string): string {

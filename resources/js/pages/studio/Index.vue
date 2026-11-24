@@ -21,6 +21,7 @@ import {
 } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import WalletCredits from '@/components/WalletCredits.vue';
+import { csrfHeaders } from '@/lib/csrf';
 import { createRequestKey } from '@/lib/requestKey';
 import {
     Card,
@@ -233,26 +234,6 @@ function formatUsd(value: string | number): string {
         minimumFractionDigits: 2,
         maximumFractionDigits: 4,
     }).format(amount);
-}
-function csrfHeaders(): Record<string, string> {
-    const meta = document.querySelector<HTMLMetaElement>(
-        'meta[name="csrf-token"]',
-    );
-    const token = meta?.content;
-    if (token) {
-        return { 'X-CSRF-TOKEN': token };
-    }
-    const cookie = document.cookie
-        .split('; ')
-        .find((item) => item.startsWith('XSRF-TOKEN='));
-    if (cookie) {
-        return {
-            'X-XSRF-TOKEN': decodeURIComponent(
-                cookie.substring('XSRF-TOKEN='.length),
-            ),
-        };
-    }
-    return {};
 }
 function requestHeaders(): Record<string, string> {
     return {
