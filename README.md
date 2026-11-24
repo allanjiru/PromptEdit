@@ -1,9 +1,32 @@
 # PromptEdit
 
-PromptEdit is an authenticated AI image-generation application built for a
-Laravel, Vue, and Inertia technical assessment. Users can estimate a request,
-reserve wallet funds, submit generation work to Pixelforge, follow live status,
-and view privately persisted results and final costs in History.
+[![Deploy](https://github.com/allanjiru/PromptEdit/actions/workflows/deploy.yml/badge.svg)](https://github.com/allanjiru/PromptEdit/actions/workflows/deploy.yml)
+
+PromptEdit is an authenticated image-generation application built for the
+PromptEdit Senior Product Engineer take-home assessment. It integrates with the
+asynchronous Pixelforge API, calculates token-based pricing with a 25% markup,
+and maintains an exact, auditable credit ledger from reservation through final
+settlement.
+
+**Live application:** [http://5.222.0.13](http://5.222.0.13)
+
+Register an account, use **Buy credits** to add simulated assessment credits,
+and submit a generation. No card is required and no real payment is made.
+
+## Product journey
+
+1. Enter a prompt and choose the image size and quality. Up to four reference
+   image URLs are optional.
+2. Review the server-calculated estimated charge and available balance before
+   submitting.
+3. The estimated amount is reserved atomically and the request is submitted to
+   Pixelforge by a queue worker.
+4. Studio follows the generation through queued, processing, completed, or
+   failed states.
+5. A successful result is settled from its actual token usage. A failed result
+   releases the full reservation and costs the user nothing.
+6. History displays the estimate, final charge, status, prompt, settings, and
+   privately served result image.
 
 ## Stack and assessment behavior
 
@@ -17,6 +40,35 @@ and view privately persisted results and final costs in History.
 - Duplicate/out-of-order webhook protection, bounded provider reconciliation,
   submission recovery, and private image persistence
 - Simulated, authenticated reviewer credits; no real payment processing
+
+## Correctness and resilience
+
+Money is stored as integer nanodollars (`USD × 1,000,000,000`). Provider rates
+are converted from per-million-token prices without using floating-point
+arithmetic for settlement. The final customer charge is the provider cost plus
+25%, rounded up to the smallest stored unit.
+
+Each generation uses a client request UUID and an immutable provider payload.
+Wallet reservations and ledger entries are written under PostgreSQL row locks.
+Submission retries reuse the same Pixelforge idempotency key, while webhook
+event IDs and financial transaction keys are unique in the database. As a
+result, retries and duplicate deliveries cannot create duplicate generations or
+charges.
+
+Webhook events are signature-verified against the raw request body, persisted
+before processing, and handled asynchronously. State transitions are monotonic,
+so duplicate and out-of-order events cannot move a terminal generation
+backwards. Scheduled recovery covers uncertain submissions, missed webhooks,
+delayed results, and private-image persistence.
+
+Useful Pixelforge test prompts include:
+
+```text
+Reviewer sample: abstract sunrise over geometric hills
+[slow] Reviewer sample: luminous glass city at dusk
+[duplicate] Reviewer sample: layered blue and gold waves
+[fail] Reviewer sample: deliberate failure-path verification
+```
 
 ## Local setup
 
@@ -49,8 +101,14 @@ locking paths, webhook inserts, and concurrency guarantees are PostgreSQL
 specific. Tests use the isolated `promptedit_test` PostgreSQL database configured
 in `phpunit.xml`; never point that configuration at development or production.
 
-For local development, `composer dev` starts the development processes. That
-convenience command is not a production supervisor.
+For local development, start the web server, queue listener, log viewer, and
+frontend development server with:
+
+```bash
+composer dev
+```
+
+This convenience command is not a production process supervisor.
 
 ## Frontend
 
@@ -86,16 +144,18 @@ prevent overlapping and duplicate multi-node scheduler execution.
 
 ## Pixelforge
 
-Configure `PIXELFORGE_BASE_URL`, `PIXELFORGE_API_KEY`, and a high-entropy
-`PIXELFORGE_WEBHOOK_SECRET`. Register this public HTTPS callback with Pixelforge:
+Create a separate Pixelforge API key for each environment. Configure
+`PIXELFORGE_BASE_URL`, `PIXELFORGE_API_KEY`, and the signing secret supplied for
+that key in `PIXELFORGE_WEBHOOK_SECRET`. Register this callback with Pixelforge:
 
 ```text
 POST https://your-host.example/api/webhooks/pixelforge
 ```
 
-The signature is mandatory and is checked against the raw body with a five-minute
-timestamp tolerance. `localhost` and `127.0.0.1` cannot receive remote provider
-webhooks. The scheduler remains a bounded fallback for missed deliveries.
+The signature is mandatory and is checked against the raw body with a
+five-minute timestamp tolerance. A tunnel such as Cloudflare Tunnel or ngrok is
+required for local webhook testing. The scheduler remains a bounded fallback
+for missed deliveries.
 
 ## Simulated reviewer credits
 
@@ -118,19 +178,25 @@ client UUID makes retries idempotent. No real money is charged. See
 ```bash
 composer validate --strict
 composer check-platform-reqs
-php artisan test
+composer test
 npm run test:frontend
 npm run types:check
 npm run check
 npm run build
-vendor/bin/pint --test
-vendor/bin/phpstan analyse
 git diff --check
 ```
 
-`php artisan test` rebuilds an isolated PostgreSQL test schema. The read-only
-`php artisan deployment:migration-preflight` command is for checking an existing
-database before a deployment migration.
+`composer test` runs Pint, PHPStan/Larastan, and the Laravel test suite.
+`php artisan test` rebuilds an isolated PostgreSQL test schema. Pricing has a
+focused unit suite covering every token category, markup and rounding behavior,
+formatting, invalid catalogs, and overflow protection. Feature tests exercise
+wallet concurrency, provider retry/idempotency, webhook ordering and duplicates,
+result reconciliation, private images, and demo-credit limits.
+
+The read-only `php artisan deployment:migration-preflight` command checks an
+existing database before a deployment migration. GitHub Actions runs the full
+static-analysis and test gate, creates production assets, deploys over SSH, runs
+migrations, restarts workers, and checks the health endpoint.
 
 ## Architecture and limitations
 
