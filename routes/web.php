@@ -14,7 +14,6 @@ use Illuminate\Support\Facades\Route;
 Route::inertia('/', 'Welcome')->name('home');
 
 Route::middleware(['auth'])->group(function () {
-    Route::inertia('dashboard', 'Dashboard')->name('dashboard');
     Route::get('/studio', StudioController::class)->name('studio.index');
 
     Route::post('/wallet/demo-credits', DemoCreditPurchaseController::class)

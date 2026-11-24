@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Link, usePage } from '@inertiajs/vue3';
-import { CreditCard, LayoutGrid, Sparkles } from '@lucide/vue';
+import { CreditCard, Sparkles } from '@lucide/vue';
 import { computed } from 'vue';
 
 import AppLogo from '@/components/AppLogo.vue';
@@ -17,7 +17,6 @@ import {
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
 
-import { dashboard } from '@/routes';
 import { index as studioIndex } from '@/routes/studio';
 
 import type { NavItem } from '@/types';
@@ -30,11 +29,6 @@ const mainNavItems = computed<NavItem[]>(() => {
             title: 'Create Image',
             href: studioIndex(),
             icon: Sparkles,
-        },
-        {
-            title: 'Dashboard',
-            href: dashboard(),
-            icon: LayoutGrid,
         },
     ];
 
