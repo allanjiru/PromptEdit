@@ -833,15 +833,17 @@ async function restoreLatestGeneration(): Promise<void> {
                     Create Image
                 </h1>
             </div>
-            <p class="text-sm text-muted-foreground">
-                Turn your ideas into images with Pixelforge.
-            </p>
-            <Link
-                href="/generations"
-                class="inline-flex items-center rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-            >
-                View history
-            </Link>
+            <div class="flex items-center justify-between gap-4">
+                <p class="text-sm text-muted-foreground">
+                    Turn your ideas into images with Pixelforge.
+                </p>
+                <Link
+                    href="/generations"
+                    class="inline-flex shrink-0 items-center rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+                >
+                    View history
+                </Link>
+            </div>
         </div>
         <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
             <div class="space-y-6">
