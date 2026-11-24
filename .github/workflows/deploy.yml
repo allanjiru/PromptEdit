@@ -53,7 +53,7 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.4"
+          php-version: "8.5"
           extensions: bcmath, pdo_pgsql
           tools: composer:v2
           coverage: none
@@ -67,8 +67,12 @@ jobs:
       - name: Setup application
         run: composer setup
 
-      - name: Run CI checks
-        run: composer ci:check
+      - name: Run deployment checks
+        run: |
+          npm run check
+          npm run types:check
+          vendor/bin/pint --test
+          php artisan test
 
       - name: Build production assets
         run: |
