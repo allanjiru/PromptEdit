@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import { CheckCircle2, CreditCard, LoaderCircle } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
 import { createRequestKey } from '@/lib/requestKey';
@@ -24,6 +24,8 @@ const isPurchasing = ref(false);
 const purchaseError = ref('');
 const purchaseSuccess = ref('');
 const requestKey = ref<string | null>(null);
+let successMessageTimer: ReturnType<typeof window.setTimeout> | null = null;
+const SUCCESS_MESSAGE_DURATION_MS = 5_000;
 
 const selectedPackage = computed<DemoCreditPackage | null>(
     () =>
@@ -85,6 +87,15 @@ function open(): void {
     purchaseError.value = '';
 }
 
+function clearSuccessMessage(): void {
+    if (successMessageTimer !== null) {
+        window.clearTimeout(successMessageTimer);
+        successMessageTimer = null;
+    }
+
+    purchaseSuccess.value = '';
+}
+
 function selectPackage(packageId: string): void {
     if (isPurchasing.value) return;
 
@@ -94,7 +105,7 @@ function selectPackage(packageId: string): void {
 
     selectedPackageId.value = packageId;
     purchaseError.value = '';
-    purchaseSuccess.value = '';
+    clearSuccessMessage();
 }
 
 async function purchase(): Promise<void> {
@@ -103,7 +114,7 @@ async function purchase(): Promise<void> {
     requestKey.value ??= createRequestKey();
     isPurchasing.value = true;
     purchaseError.value = '';
-    purchaseSuccess.value = '';
+    clearSuccessMessage();
 
     const controller = new AbortController();
     let timedOut = false;
@@ -147,6 +158,10 @@ async function purchase(): Promise<void> {
 
         emit('purchased', result.wallet);
         purchaseSuccess.value = `${formatUsd(result.credited_usd)} in demo credits added. No real payment was made.`;
+        successMessageTimer = window.setTimeout(
+            clearSuccessMessage,
+            SUCCESS_MESSAGE_DURATION_MS,
+        );
         requestKey.value = null;
         selectedPackageId.value = null;
         expanded.value = false;
@@ -161,6 +176,8 @@ async function purchase(): Promise<void> {
         isPurchasing.value = false;
     }
 }
+
+onBeforeUnmount(clearSuccessMessage);
 
 defineExpose({ open });
 </script>

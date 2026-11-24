@@ -225,6 +225,12 @@ describe('WalletCredits', () => {
         expect(wrapper.emitted('purchased')?.[0]).toEqual([purchasedWallet()]);
         expect(wrapper.text()).toContain('$5.00 in demo credits added');
         expect(wrapper.text()).toContain('No real payment was made');
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        await nextTick();
+
+        expect(wrapper.text()).not.toContain('$5.00 in demo credits added');
+        expect(wrapper.find('[role="status"]').exists()).toBe(false);
     });
 
     it('displays a failed purchase without changing the wallet', async () => {
