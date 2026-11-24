@@ -4,7 +4,7 @@ name: deploy
 on:
   push:
     branches:
-      - main
+      - master
   workflow_dispatch:
 
 permissions:
@@ -136,7 +136,7 @@ jobs:
     name: Deploy to production
     needs: build
 
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/master'
 
     runs-on: ubuntu-24.04
     timeout-minutes: 25
