@@ -160,27 +160,60 @@ class PixelforgeResultProcessor
             );
         }
 
-        // total_tokens is an informational aggregate, not an
-        // additional billable category.
-        $billableUsage = $usage;
-        unset($billableUsage['total_tokens']);
-
-        // Reject unknown usage categories instead of silently
-        // undercharging the customer.
-        $supportedCategories = [
-            'input_tokens',
+        $billableCategories = [
             'input_text_tokens',
             'input_image_tokens',
             'output_tokens',
             'reasoning_tokens',
         ];
 
-        foreach (array_keys($billableUsage) as $category) {
-            if (! in_array($category, $supportedCategories, true)) {
+        $expectedUsageCategories = [
+            ...$billableCategories,
+            'total_tokens',
+        ];
+
+        $actualUsageCategories = array_keys($usage);
+        sort($actualUsageCategories);
+        sort($expectedUsageCategories);
+
+        if ($actualUsageCategories !== $expectedUsageCategories) {
+            throw new LogicException(
+                'Provider usage does not contain the documented categories.'
+            );
+        }
+
+        $billableUsage = [];
+
+        foreach ($billableCategories as $category) {
+            $tokens = $usage[$category];
+
+            if (! is_int($tokens) || $tokens < 0) {
                 throw new LogicException(
-                    "Unsupported provider usage category: {$category}"
+                    "Invalid provider usage for {$category}."
                 );
             }
+
+            $billableUsage[$category] = $tokens;
+        }
+
+        if (
+            ! is_int($usage['total_tokens']) ||
+            $usage['total_tokens'] !== array_sum($billableUsage)
+        ) {
+            throw new LogicException(
+                'Provider total token usage is inconsistent.'
+            );
+        }
+
+        $rateCategories = array_keys($rates);
+        $expectedRateCategories = $billableCategories;
+        sort($rateCategories);
+        sort($expectedRateCategories);
+
+        if ($rateCategories !== $expectedRateCategories) {
+            throw new LogicException(
+                'Provider rates do not contain the documented categories.'
+            );
         }
 
         $providerCostUnits = $this->pricing->providerCostUnits(
@@ -191,7 +224,9 @@ class PixelforgeResultProcessor
         return $this->generations->succeed(
             $generation,
             $providerCostUnits,
-            $urls
+            $urls,
+            $usage,
+            $rates
         );
     }
 

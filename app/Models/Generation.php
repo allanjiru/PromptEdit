@@ -12,6 +12,8 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * @property array<int, mixed>|null $result_image_urls
  * @property array<int, string>|null $reference_image_urls
  * @property array<string, mixed>|null $provider_request_payload
+ * @property array<string, int>|null $provider_usage
+ * @property array<string, string>|null $provider_rates
  * @property int $id
  * @property int $user_id
  * @property string $request_key
@@ -85,6 +87,8 @@ class Generation extends Model
             'reference_image_urls' => 'array',
             'result_image_urls' => 'array',
             'provider_request_payload' => 'array',
+            'provider_usage' => 'array',
+            'provider_rates' => 'array',
 
             'estimated_charge_units' => 'integer',
             'provider_cost_units' => 'integer',

@@ -196,11 +196,15 @@ class GenerationService
      * Finalize a successful provider job and its charge.
      *
      * @param  list<string>  $resultImageUrls
+     * @param  array<string, int>  $providerUsage
+     * @param  array<string, string>  $providerRates
      */
     public function succeed(
         Generation $generation,
         int $providerCostUnits,
-        array $resultImageUrls
+        array $resultImageUrls,
+        array $providerUsage = [],
+        array $providerRates = []
     ): Generation {
         if ($providerCostUnits < 0) {
             throw new LogicException(
@@ -218,14 +222,20 @@ class GenerationService
             $generation,
             function (Generation $locked) use (
                 $providerCostUnits,
-                $resultImageUrls
+                $resultImageUrls,
+                $providerUsage,
+                $providerRates
             ) {
                 if ($locked->isCompleted()) {
                     if (
                         $locked->provider_cost_units !==
                             $providerCostUnits ||
                         ($locked->result_image_urls ?? []) !==
-                            $resultImageUrls
+                            $resultImageUrls ||
+                        ($providerUsage !== [] &&
+                            ($locked->provider_usage ?? []) !== $providerUsage) ||
+                        ($providerRates !== [] &&
+                            ($locked->provider_rates ?? []) !== $providerRates)
                     ) {
                         throw new LogicException(
                             'Conflicting success callback.'
@@ -251,6 +261,8 @@ class GenerationService
                 $locked->customer_charge_units =
                     $charge->metadata['customer_charge_units'];
                 $locked->result_image_urls = $resultImageUrls;
+                $locked->provider_usage = $providerUsage ?: null;
+                $locked->provider_rates = $providerRates ?: null;
                 $locked->status =
                     Generation::STATUS_COMPLETED;
                 $locked->completed_at = now();

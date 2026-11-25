@@ -5,11 +5,13 @@ export function csrfHeaders(): Record<string, string> {
 
     if (cookie) {
         try {
-            return {
-                'X-XSRF-TOKEN': decodeURIComponent(
-                    cookie.substring('XSRF-TOKEN='.length),
-                ),
-            };
+            const token = decodeURIComponent(
+                cookie.substring('XSRF-TOKEN='.length),
+            );
+
+            if (token) {
+                return { 'X-XSRF-TOKEN': token };
+            }
         } catch {
             // Fall through to the page token when a cookie is malformed.
         }

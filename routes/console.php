@@ -27,3 +27,8 @@ Schedule::command('pixelforge:reconcile-results --limit=10')
     ->everyMinute()
     ->onOneServer()
     ->withoutOverlapping(5);
+
+Schedule::command('pixelforge:reconcile-usage')
+    ->dailyAt('02:00')
+    ->onOneServer()
+    ->withoutOverlapping(30);

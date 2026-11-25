@@ -66,12 +66,17 @@ class PixelforgeResultProcessorTest extends TestCase
             'id' => 'gen_test123',
             'status' => 'succeeded',
             'usage' => [
-                'input_tokens' => 1000,
+                'input_text_tokens' => 1000,
+                'input_image_tokens' => 0,
                 'output_tokens' => 2000,
+                'reasoning_tokens' => 0,
+                'total_tokens' => 3000,
             ],
             'rates' => [
-                'input_tokens' => '5.00',
+                'input_text_tokens' => '5.00',
+                'input_image_tokens' => '10.00',
                 'output_tokens' => '40.00',
+                'reasoning_tokens' => '12.50',
             ],
             'images' => [
                 [
@@ -318,6 +323,27 @@ class PixelforgeResultProcessorTest extends TestCase
         $payload = $this->successfulPayload();
 
         unset($payload['rates']);
+
+        $this->expectException(LogicException::class);
+
+        $this->process($payload);
+    }
+
+    public function test_missing_billable_usage_category_is_rejected(): void
+    {
+        $payload = $this->successfulPayload();
+
+        unset($payload['usage']['reasoning_tokens']);
+
+        $this->expectException(LogicException::class);
+
+        $this->process($payload);
+    }
+
+    public function test_inconsistent_total_usage_is_rejected(): void
+    {
+        $payload = $this->successfulPayload();
+        $payload['usage']['total_tokens']++;
 
         $this->expectException(LogicException::class);
 

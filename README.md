@@ -142,6 +142,11 @@ Scheduled recovery covers delayed webhooks, uncertain submissions, missing
 private images, and bounded result reconciliation. Shared database cache locks
 prevent overlapping and duplicate multi-node scheduler execution.
 
+The daily `pixelforge:reconcile-usage` task compares the previous UTC day's
+stored token snapshots and provider costs with Pixelforge's per-key usage report.
+Run it with `--start-date` and `--end-date` for an explicit range of up to 92
+days.
+
 ## Pixelforge
 
 Create a separate Pixelforge API key for each environment. Configure

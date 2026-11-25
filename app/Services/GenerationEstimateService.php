@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\Cache;
 use InvalidArgumentException;
 use LogicException;
 
@@ -28,11 +27,9 @@ class GenerationEstimateService
         string $quality,
         array $referenceUrls = []
     ): array {
-        $catalog = Cache::remember(
-            'pixelforge:pricing:v1',
-            now()->addMinutes(15),
-            fn () => $this->client->pricing()
-        );
+        // Rates can change at any time. Fetch a fresh catalog for every quote
+        // so the maximum reservation is based on the latest published rates.
+        $catalog = $this->client->pricing();
 
         if (
             ($catalog['currency'] ?? null) !== 'usd' ||

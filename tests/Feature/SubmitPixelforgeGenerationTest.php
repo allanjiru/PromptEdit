@@ -13,6 +13,8 @@ use App\Services\PixelforgeClient;
 use App\Services\WalletService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Facades\Http;
 use Mockery;
 use Tests\TestCase;
 
@@ -222,5 +224,74 @@ final class SubmitPixelforgeGenerationTest extends TestCase
                 'status' => 'active',
             ]
         );
+    }
+
+    public function test_definitive_provider_rejection_releases_funds(): void
+    {
+        $generation = $this->generation();
+
+        config([
+            'services.pixelforge.api_key' => 'test-key',
+            'services.pixelforge.base_url' => 'https://pixelforge.example/v1',
+        ]);
+
+        Http::fake([
+            'pixelforge.example/*' => Http::response([
+                'error' => [
+                    'type' => 'invalid_request_error',
+                    'code' => 'content_policy_violation',
+                    'message' => 'The prompt was rejected.',
+                ],
+            ], 400),
+        ]);
+
+        (new SubmitPixelforgeGeneration($generation->id))->handle(
+            app(PixelforgeClient::class),
+            app(GenerationSubmissionClaimService::class)
+        );
+
+        $fresh = $generation->fresh();
+
+        $this->assertSame(Generation::STATUS_FAILED, $fresh->status);
+        $this->assertSame('The prompt was rejected.', $fresh->error_message);
+        $this->assertDatabaseHas('wallet_reservations', [
+            'generation_id' => $generation->id,
+            'status' => 'released',
+        ]);
+    }
+
+    public function test_retry_after_sets_a_minimum_recovery_time(): void
+    {
+        $generation = $this->generation();
+
+        config([
+            'services.pixelforge.api_key' => 'test-key',
+            'services.pixelforge.base_url' => 'https://pixelforge.example/v1',
+        ]);
+
+        Http::fake([
+            'pixelforge.example/*' => Http::response([
+                'error' => [
+                    'type' => 'rate_limit_error',
+                    'code' => 'rate_limit_exceeded',
+                    'message' => 'Wait before retrying.',
+                ],
+            ], 429, ['Retry-After' => '300']),
+        ]);
+
+        try {
+            (new SubmitPixelforgeGeneration($generation->id))->handle(
+                app(PixelforgeClient::class),
+                app(GenerationSubmissionClaimService::class)
+            );
+            $this->fail('Expected provider request exception.');
+        } catch (RequestException) {
+            // The queue will retry with the same idempotency key.
+        }
+
+        $due = $generation->fresh()->submission_reconciliation_due_at;
+
+        $this->assertNotNull($due);
+        $this->assertGreaterThanOrEqual(295, now()->diffInSeconds($due, false));
     }
 }

@@ -143,7 +143,7 @@ const invalidReferenceIndexes = computed(() =>
 const hasValidForm = computed(
     () =>
         normalizedPrompt.value.length > 0 &&
-        promptLength.value <= 5000 &&
+        promptLength.value <= 4000 &&
         referenceUrls.value.length <= MAX_REFERENCE_IMAGES &&
         invalidReferenceIndexes.value.length === 0,
 );
@@ -865,14 +865,14 @@ async function restoreLatestGeneration(): Promise<void> {
                                 <div class="flex items-center justify-between">
                                     <Label for="prompt">Prompt</Label>
                                     <span class="text-xs text-muted-foreground">
-                                        {{ promptLength }} / 5000
+                                        {{ promptLength }} / 4000
                                     </span>
                                 </div>
                                 <textarea
                                     id="prompt"
                                     v-model="prompt"
                                     rows="7"
-                                    maxlength="5000"
+                                    maxlength="4000"
                                     placeholder="Describe the image you want to create..."
                                     class="flex w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
                                     :disabled="

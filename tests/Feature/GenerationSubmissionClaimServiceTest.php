@@ -258,6 +258,58 @@ final class GenerationSubmissionClaimServiceTest extends TestCase
         $this->assertReservationActive($generation);
     }
 
+    public function test_rejected_submission_fails_and_releases_reservation(): void
+    {
+        $generation = $this->generation();
+        $claim = $this->claims->acquire($generation->id);
+
+        $this->assertTrue($this->claims->rejected(
+            $generation->id,
+            $claim['token'],
+            'Prompt rejected by content policy.'
+        ));
+
+        $fresh = $generation->fresh();
+
+        $this->assertSame(Generation::STATUS_FAILED, $fresh->status);
+        $this->assertSame(
+            'Prompt rejected by content policy.',
+            $fresh->error_message
+        );
+        $this->assertDatabaseHas('wallet_reservations', [
+            'generation_id' => $generation->id,
+            'status' => 'released',
+        ]);
+        $this->assertSame(
+            10_000_000_000,
+            $fresh->user->wallet->fresh()->available_units
+        );
+    }
+
+    public function test_submission_retry_limit_pauses_for_review(): void
+    {
+        $generation = $this->generation();
+        $generation->forceFill([
+            'submission_attempts' => GenerationSubmissionClaimService::MAX_ATTEMPTS - 1,
+        ])->save();
+        $claim = $this->claims->acquire($generation->id);
+
+        $this->assertTrue($this->claims->uncertain(
+            $generation->id,
+            $claim['token'],
+            'Connection timed out.'
+        ));
+
+        $fresh = $generation->fresh();
+
+        $this->assertSame(
+            Generation::SUBMISSION_NEEDS_REVIEW,
+            $fresh->submission_status
+        );
+        $this->assertNull($fresh->submission_reconciliation_due_at);
+        $this->assertReservationActive($fresh);
+    }
+
     public function test_missing_snapshot_requires_manual_review(): void
     {
         $generation = $this->generation();

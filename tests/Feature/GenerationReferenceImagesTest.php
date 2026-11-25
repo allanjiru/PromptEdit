@@ -68,6 +68,7 @@ class GenerationReferenceImagesTest extends TestCase
             $references,
             $generation->provider_request_payload['reference_images']
         );
+        Http::assertSentCount(2);
         Queue::assertPushed(SubmitPixelforgeGeneration::class);
     }
 
@@ -129,6 +130,29 @@ class GenerationReferenceImagesTest extends TestCase
             ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('reference_image_urls.0');
+    }
+
+    public function test_quote_and_submission_enforce_provider_prompt_limit(): void
+    {
+        $payload = [
+            ...$this->payload([]),
+            'prompt' => str_repeat('x', 4001),
+        ];
+
+        $this->actingAs($this->user)
+            ->postJson(route('generations.quote'), $payload)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('prompt');
+
+        $this->actingAs($this->user)
+            ->postJson(route('generations.store'), [
+                ...$payload,
+                'request_key' => (string) Str::uuid(),
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('prompt');
+
+        $this->assertDatabaseCount('generations', 0);
     }
 
     private function payload(array $references): array

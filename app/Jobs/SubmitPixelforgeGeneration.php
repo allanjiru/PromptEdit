@@ -7,6 +7,7 @@ use App\Services\PixelforgeClient;
 use App\Services\PixelforgeReconciliationDispatcher;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use RuntimeException;
 use Throwable;
@@ -84,6 +85,46 @@ final class SubmitPixelforgeGeneration implements ShouldQueue
                 ($reconciliation ?? app(PixelforgeReconciliationDispatcher::class))
                     ->dispatchInitial($this->generationId);
             }
+        } catch (RequestException $exception) {
+            $code = $exception->response->json('error.code');
+            $message = $exception->response->json('error.message');
+            $reason = is_string($message) && trim($message) !== ''
+                ? $message
+                : $exception->getMessage();
+
+            if (in_array($code, [
+                'invalid_api_key',
+                'validation_failed',
+                'content_policy_violation',
+                'daily_limit_exceeded',
+            ], true)) {
+                $claims->rejected(
+                    $this->generationId,
+                    $claim['token'],
+                    $reason
+                );
+
+                return;
+            }
+
+            if ($code === 'idempotency_key_reused') {
+                $claims->needsReview(
+                    $this->generationId,
+                    $claim['token'],
+                    $reason
+                );
+
+                return;
+            }
+
+            $claims->uncertain(
+                $this->generationId,
+                $claim['token'],
+                $reason,
+                $this->retryAfter($exception)
+            );
+
+            throw $exception;
         } catch (Throwable $exception) {
             $claims->uncertain(
                 $this->generationId,
@@ -93,6 +134,21 @@ final class SubmitPixelforgeGeneration implements ShouldQueue
 
             throw $exception;
         }
+    }
+
+    private function retryAfter(RequestException $exception): ?int
+    {
+        $value = trim($exception->response->header('Retry-After'));
+
+        if ($value === '' || ! ctype_digit($value)) {
+            return null;
+        }
+
+        if (strlen($value) > strlen((string) PHP_INT_MAX)) {
+            return 31_536_000;
+        }
+
+        return min((int) $value, 31_536_000);
     }
 
     public function failed(?Throwable $exception): void

@@ -262,6 +262,8 @@ supervises it as a long-running process. `php artisan schedule:list` shows:
   private persistence idempotently.
 - `pixelforge:reconcile-results --limit=10` every minute: resumes due provider
   checks while preserving the established maximum of 12 provider requests.
+- `pixelforge:reconcile-usage` daily at 02:00: compares the previous UTC day's
+  stored token usage and provider costs with the API key's provider report.
 
 Every task uses `onOneServer()` and `withoutOverlapping(5)`. These locks require
 the shared atomic database cache and synchronized clocks. Queue jobs and fallback

@@ -22,7 +22,7 @@ class GenerationController extends Controller
     ): JsonResponse {
         $validated = $request->validate([
             'request_key' => ['required', 'uuid'],
-            'prompt' => ['required', 'string', 'max:5000'],
+            'prompt' => ['required', 'string', 'max:4000'],
             'image_size' => [
                 'required',
                 'string',

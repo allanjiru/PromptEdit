@@ -19,7 +19,7 @@ class GenerationQuoteController extends Controller
         WalletService $wallets
     ): JsonResponse {
         $validated = $request->validate([
-            'prompt' => ['required', 'string', 'max:5000'],
+            'prompt' => ['required', 'string', 'max:4000'],
             'image_size' => [
                 'required',
                 'in:1024x1024,1536x1024,1024x1536',

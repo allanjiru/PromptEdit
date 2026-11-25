@@ -9,7 +9,15 @@ use LogicException;
 
 final class GenerationSubmissionClaimService
 {
+    public const MAX_ATTEMPTS = 6;
+
     private const LEASE_SECONDS = 120;
+
+    private const RETRY_DELAYS = [10, 30, 120, 600, 900];
+
+    public function __construct(
+        private readonly WalletService $wallets
+    ) {}
 
     /**
      * @return array{
@@ -183,6 +191,117 @@ final class GenerationSubmissionClaimService
     public function uncertain(
         int $generationId,
         string $token,
+        string $reason,
+        ?int $retryAfterSeconds = null
+    ): bool {
+        return DB::transaction(function () use (
+            $generationId,
+            $token,
+            $reason,
+            $retryAfterSeconds
+        ) {
+            $generation = $this->lockGeneration($generationId);
+
+            if (
+                $generation->submission_claim_token !== $token ||
+                $generation->isTerminal() ||
+                $generation->provider_job_id !== null
+            ) {
+                return false;
+            }
+
+            if (
+                $generation->submission_attempts >= self::MAX_ATTEMPTS
+            ) {
+                $generation->submission_status =
+                    Generation::SUBMISSION_NEEDS_REVIEW;
+                $generation->submission_claim_token = null;
+                $generation->submission_claimed_until = null;
+                $generation->submission_reconciliation_due_at = null;
+                $generation->submission_last_error = mb_substr(
+                    'Submission retry limit reached. '.$reason,
+                    0,
+                    2000
+                );
+                $generation->save();
+
+                return true;
+            }
+
+            $generation->submission_status =
+                Generation::SUBMISSION_UNCERTAIN;
+
+            $generation->submission_claim_token = null;
+            $generation->submission_claimed_until = null;
+
+            $backoffIndex = min(
+                $generation->submission_attempts - 1,
+                count(self::RETRY_DELAYS) - 1
+            );
+
+            $delay = max(
+                self::RETRY_DELAYS[$backoffIndex],
+                $retryAfterSeconds ?? 0
+            );
+
+            $generation->submission_reconciliation_due_at =
+                now()->addSeconds($delay);
+
+            $generation->submission_last_error =
+                mb_substr($reason, 0, 2000);
+
+            $generation->save();
+
+            return true;
+        }, 3);
+    }
+
+    public function rejected(
+        int $generationId,
+        string $token,
+        string $reason
+    ): bool {
+        return DB::transaction(function () use (
+            $generationId,
+            $token,
+            $reason
+        ) {
+            $generation = $this->lockGeneration($generationId);
+
+            if (
+                $generation->submission_claim_token !== $token ||
+                $generation->isTerminal() ||
+                $generation->provider_job_id !== null
+            ) {
+                return false;
+            }
+
+            $this->wallets->releaseFailure($generation);
+
+            $generation->status = Generation::STATUS_FAILED;
+            $generation->submission_status =
+                Generation::SUBMISSION_NEEDS_REVIEW;
+            $generation->error_message = mb_substr($reason, 0, 2000);
+            $generation->failed_at = now();
+            $generation->submission_claim_token = null;
+            $generation->submission_claimed_until = null;
+            $generation->submission_reconciliation_due_at = null;
+            $generation->submission_last_error = mb_substr(
+                $reason,
+                0,
+                2000
+            );
+            $generation->recovery_dispatch_token = null;
+            $generation->recovery_dispatch_until = null;
+            $generation->save();
+
+            return true;
+        }, 3);
+    }
+
+    public function needsReview(
+        int $generationId,
+        string $token,
         string $reason
     ): bool {
         return DB::transaction(function () use (
@@ -201,17 +320,17 @@ final class GenerationSubmissionClaimService
             }
 
             $generation->submission_status =
-                Generation::SUBMISSION_UNCERTAIN;
-
+                Generation::SUBMISSION_NEEDS_REVIEW;
             $generation->submission_claim_token = null;
             $generation->submission_claimed_until = null;
-
-            $generation->submission_reconciliation_due_at =
-                now()->addMinutes(2);
-
-            $generation->submission_last_error =
-                mb_substr($reason, 0, 2000);
-
+            $generation->submission_reconciliation_due_at = null;
+            $generation->submission_last_error = mb_substr(
+                $reason,
+                0,
+                2000
+            );
+            $generation->recovery_dispatch_token = null;
+            $generation->recovery_dispatch_until = null;
             $generation->save();
 
             return true;
